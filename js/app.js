@@ -497,10 +497,10 @@ function setStatus(cls, html) {
   st.innerHTML = html;
 }
 
-async function readCanvas(src, crop) {
+async function readCanvas(src, crop, quick = false) {
   const cv = crop ? IMG.toCanvas(src, 900, crop) : IMG.toCanvas(src, 1100);
   const scale = (crop ? crop.w : srcSize(src).w) / cv.width;
-  const res = await OCR.read(IMG.pixels(cv), { maxDim: crop ? 820 : 760 });
+  const res = await OCR.read(IMG.pixels(cv), { maxDim: crop ? 820 : 760, quick });
   if (res.ok) {
     const ox = crop ? crop.x : 0, oy = crop ? crop.y : 0;
     res.boxes = res.boxes.map((b) => ({ ...b, x: b.x * scale + ox, y: b.y * scale + oy, w: b.w * scale, h: b.h * scale }));
@@ -520,7 +520,7 @@ async function runReader(crop = null) {
     if (!res.ok && !crop) {
       for (const q of [1, 3]) {
         const rsrc = IMG.rotate(d.img, (d.rot + q) % 4);
-        const r2 = await readCanvas(rsrc, null);
+        const r2 = await readCanvas(rsrc, null, true);
         if (r2.ok) { d.rot = (d.rot + q) % 4; d.src = rsrc; drawPhoto(); res = r2; break; }
       }
     }

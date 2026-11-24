@@ -648,7 +648,7 @@ function rotateGray(src, w, h, deg) {
 }
 
 // All threshold passes over one gray image; returns the best reading or null.
-function search(gray, getMax, w, h) {
+function search(gray, getMax, w, h, quick = false) {
   const minDim = Math.min(w, h);
   const rads = [0.012, 0.025, 0.05].map((f) => Math.max(2, Math.round(f * minDim)));
   const ks = [0.18, 0.3];
@@ -669,8 +669,8 @@ function search(gray, getMax, w, h) {
   };
   const strong = () => best && best.pick.S.votes >= 3 && best.pick.D.votes >= 3 && best.score > 2.6;
   pass(gray, 'luma', false);
-  if (!strong()) pass(gray, 'luma', true);
-  if (!strong() && getMax) {
+  if (!strong() && !quick) pass(gray, 'luma', true);
+  if (!strong() && getMax && !quick) {
     const gm = getMax();
     pass(gm, 'max', false);
     if (!strong()) pass(gm, 'max', true);
@@ -715,14 +715,16 @@ export function readDisplay(img, opts = {}) {
     }
     return gmCache;
   };
-  let best = search(gray, getMax, w, h);
+  let best = search(gray, getMax, w, h, opts.quick);
   let back = null, angle = 0;
-  // Photo taken at an angle: try a slight tilt each way before giving up.
-  if ((!best || confidenceOf(best.pick) < minConf) && opts.tilt !== false) {
+  // Photo taken at an angle: when something number-like was found but the read is weak,
+  // try a slight tilt each way before giving up.
+  if ((!best || confidenceOf(best.pick) < minConf) && !opts.quick && opts.tilt !== false) {
     for (const deg of [-7, 7]) {
       const rot = rotateGray(gray, w, h, deg);
-      const res = search(rot.gray, null, w, h);
-      if (res && confidenceOf(res.pick) >= minConf && (!best || res.score > best.score || confidenceOf(best.pick) < minConf)) {
+      const res = search(rot.gray, null, w, h, true);
+      // A tilted read must be clearly good to replace an upright one.
+      if (res && confidenceOf(res.pick) >= minConf + 0.07 && (!best || res.score > best.score || confidenceOf(best.pick) < minConf)) {
         best = res; back = rot.back; angle = deg;
         break;
       }
