@@ -96,6 +96,20 @@ export function binarize(gray, I, w, h, win, k, invert) {
   return out;
 }
 
+export function boxBlur(gray, w, h, r) {
+  if (r <= 0) return gray;
+  const I = integral(gray, w, h), out = new Uint8Array(w * h), W1 = w + 1;
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - r), y1 = Math.min(h - 1, y + r);
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - r), x1 = Math.min(w - 1, x + r);
+      const sum = I[(y1 + 1) * W1 + x1 + 1] - I[y0 * W1 + x1 + 1] - I[(y1 + 1) * W1 + x0] + I[y0 * W1 + x0];
+      out[y * w + x] = sum / ((x1 - x0 + 1) * (y1 - y0 + 1));
+    }
+  }
+  return out;
+}
+
 // Sliding max (isMax) or min over a (2r+1)^2 square, separable, O(n) with a monotonic deque.
 function extreme(src, w, h, r, isMax) {
   const tmp = new Uint8Array(w * h), out = new Uint8Array(w * h);
@@ -347,133 +361,137 @@ function readBand(bin, w, h, band) {
   cols.fill(0);
   const CI = new Int32Array(n);
   for (let i = 0; i < n; i++) { const c = Math.round(XS[i] - shear * (YS[i] - cy)) - xA + off; CI[i] = c; cols[c]++; }
-  // Column runs (allow 1 empty column inside a digit).
-  const runs0 = [];
-  for (let j = 0; j < span; j++) {
-    if (cols[j] < 2) continue;
-    const last = runs0[runs0.length - 1];
-    if (last && j - last[1] <= 2) last[1] = j;
-    else runs0.push([j, j]);
-  }
-  // Touching digits: split a run that is too wide at its emptiest column.
-  const runs = [];
-  const splitRun = ([a, b]) => {
-    if (b - a + 1 <= 0.8 * H0) { runs.push([a, b]); return; }
-    let best = -1, bv = Infinity;
-    const lo = a + Math.max(2, Math.round(0.12 * (b - a))), hi = b - Math.max(2, Math.round(0.12 * (b - a)));
-    for (let j = lo; j <= hi; j++) if (cols[j] < bv) { bv = cols[j]; best = j; }
-    const sorted = [...cols.subarray(a, b + 1)].sort((x, y) => x - y);
-    if (best < 0 || bv > 0.25 * sorted[sorted.length >> 1]) { runs.push([a, b]); return; }
-    splitRun([a, best - 1]);
-    splitRun([best + 1, b]);
-  };
-  for (const r of runs0) splitRun(r);
-  const runOf = new Int32Array(span).fill(-1);
-  runs.forEach(([a, b], k) => { for (let j = a; j <= b; j++) runOf[j] = k; });
-  const G = runs.map(([c0, c1]) => ({ c0, c1, wg: c1 - c0 + 1, y0: Infinity, y1: -1, x0: Infinity, x1: -1, idx: [] }));
-  for (let i = 0; i < n; i++) {
-    const k = runOf[CI[i]];
-    if (k < 0) continue;
-    const g = G[k];
-    g.idx.push(i);
-    if (YS[i] < g.y0) g.y0 = YS[i];
-    if (YS[i] > g.y1) g.y1 = YS[i];
-    if (XS[i] < g.x0) g.x0 = XS[i];
-    if (XS[i] > g.x1) g.x1 = XS[i];
-  }
-  for (const g of G) g.hg = g.y1 - g.y0 + 1;
-  const tall = G.filter((g) => g.hg >= 0.75 * H0 && g.wg >= 0.3 * H0 && g.wg <= 1.2 * H0);
-  const yTop = tall.length ? median(tall.map((g) => g.y0)) : band.y0;
-  const yBot = tall.length ? median(tall.map((g) => g.y1)) : band.y1;
-  const H = yBot - yTop + 1;
-  const typW = tall.length ? median(tall.map((g) => g.wg)) : 0.55 * H;
-  for (const g of G) {
-    g.kind = 'skip';
-    if (g.hg < 0.6 * H || g.wg > 1.25 * H || g.idx.length < 8) continue;
-    if (g.wg < 0.55 * typW || g.wg < 0.24 * H) {
-      // Narrow: a "1" if it is a bar spanning the digit height that does not run past it.
-      let top = 0, bot = 0;
-      for (const i of g.idx) { if (YS[i] < (yTop + yBot) / 2) top++; else bot++; }
-      const span01 = g.hg / H;
-      let outside = 0;
-      const ext = Math.max(2, Math.round(0.15 * H));
-      for (const [ya, yb] of [[g.y0 - ext, g.y0 - 2], [g.y1 + 2, g.y1 + ext]]) {
-        for (let y = Math.max(0, ya); y <= Math.min(h - 1, yb); y++) {
-          for (let x = g.x0; x <= g.x1; x++) outside += bin[y * w + x];
+  const numbers = [];
+  // Segment digits at empty columns (a 1-column gap may still be inside a digit).
+  const segment = (gapTol, alt) => {
+    // Column runs (allow 1 empty column inside a digit).
+    const runs0 = [];
+    for (let j = 0; j < span; j++) {
+      if (cols[j] < 2) continue;
+      const last = runs0[runs0.length - 1];
+      if (last && j - last[1] <= gapTol) last[1] = j;
+      else runs0.push([j, j]);
+    }
+    // Touching digits: split a run that is too wide at its emptiest column.
+    const runs = [];
+    const splitRun = ([a, b]) => {
+      if (b - a + 1 <= 0.8 * H0) { runs.push([a, b]); return; }
+      let best = -1, bv = Infinity;
+      const lo = a + Math.max(2, Math.round(0.12 * (b - a))), hi = b - Math.max(2, Math.round(0.12 * (b - a)));
+      for (let j = lo; j <= hi; j++) if (cols[j] < bv) { bv = cols[j]; best = j; }
+      const sorted = [...cols.subarray(a, b + 1)].sort((x, y) => x - y);
+      if (best < 0 || bv > 0.25 * sorted[sorted.length >> 1]) { runs.push([a, b]); return; }
+      splitRun([a, best - 1]);
+      splitRun([best + 1, b]);
+    };
+    for (const r of runs0) splitRun(r);
+    const runOf = new Int32Array(span).fill(-1);
+    runs.forEach(([a, b], k) => { for (let j = a; j <= b; j++) runOf[j] = k; });
+    const G = runs.map(([c0, c1]) => ({ c0, c1, wg: c1 - c0 + 1, y0: Infinity, y1: -1, x0: Infinity, x1: -1, idx: [] }));
+    for (let i = 0; i < n; i++) {
+      const k = runOf[CI[i]];
+      if (k < 0) continue;
+      const g = G[k];
+      g.idx.push(i);
+      if (YS[i] < g.y0) g.y0 = YS[i];
+      if (YS[i] > g.y1) g.y1 = YS[i];
+      if (XS[i] < g.x0) g.x0 = XS[i];
+      if (XS[i] > g.x1) g.x1 = XS[i];
+    }
+    for (const g of G) g.hg = g.y1 - g.y0 + 1;
+    const tall = G.filter((g) => g.hg >= 0.75 * H0 && g.wg >= 0.3 * H0 && g.wg <= 1.2 * H0);
+    const yTop = tall.length ? median(tall.map((g) => g.y0)) : band.y0;
+    const yBot = tall.length ? median(tall.map((g) => g.y1)) : band.y1;
+    const H = yBot - yTop + 1;
+    const typW = tall.length ? median(tall.map((g) => g.wg)) : 0.55 * H;
+    for (const g of G) {
+      g.kind = 'skip';
+      if (g.hg < 0.6 * H || g.wg > 1.25 * H || g.idx.length < 8) continue;
+      if (g.wg < 0.55 * typW || g.wg < 0.24 * H) {
+        // Narrow: a "1" if it is a bar spanning the digit height that does not run past it.
+        let top = 0, bot = 0;
+        for (const i of g.idx) { if (YS[i] < (yTop + yBot) / 2) top++; else bot++; }
+        const span01 = g.hg / H;
+        let outside = 0;
+        const ext = Math.max(2, Math.round(0.15 * H));
+        for (const [ya, yb] of [[g.y0 - ext, g.y0 - 2], [g.y1 + 2, g.y1 + ext]]) {
+          for (let y = Math.max(0, ya); y <= Math.min(h - 1, yb); y++) {
+            for (let x = g.x0; x <= g.x1; x++) outside += bin[y * w + x];
+          }
+        }
+        const barArea = (g.x1 - g.x0 + 1) * 2 * (ext - 1);
+        const ok = span01 > 0.72 && top > 0.25 * g.idx.length && bot > 0.25 * g.idx.length && outside < 0.25 * barArea;
+        g.kind = 'one';
+        g.digit = ok ? '1' : null;
+        g.conf = ok ? Math.min(0.7, 0.5 + (0.4 * (span01 - 0.72)) / 0.28) : 0;
+        continue;
+      }
+      const cnt = new Float64Array(7);
+      let hole = 0;
+      for (const i of g.idx) {
+        const u = (CI[i] - g.c0 + 0.5) / g.wg, v = (YS[i] - yTop + 0.5) / H;
+        if (u > 0.34 && u < 0.66 && ((v > 0.22 && v < 0.36) || (v > 0.64 && v < 0.78))) hole++;
+        for (let z = 0; z < 7; z++) {
+          const Z = ZONES[z];
+          if (u >= Z[0] && u < Z[1] && v >= Z[2] && v < Z[3]) { cnt[z]++; break; }
         }
       }
-      const barArea = (g.x1 - g.x0 + 1) * 2 * (ext - 1);
-      const ok = span01 > 0.72 && top > 0.25 * g.idx.length && bot > 0.25 * g.idx.length && outside < 0.25 * barArea;
-      g.kind = 'one';
-      g.digit = ok ? '1' : null;
-      g.conf = ok ? Math.min(0.7, 0.5 + (0.4 * (span01 - 0.72)) / 0.28) : 0;
-      continue;
+      g.fills = ZONES.map((Z, z) => cnt[z] / Math.max(1, (Z[1] - Z[0]) * g.wg * (Z[3] - Z[2]) * H));
+      g.holeFill = hole / Math.max(1, 0.32 * g.wg * 0.28 * H);
+      g.kind = 'digit';
     }
-    const cnt = new Float64Array(7);
-    let hole = 0;
-    for (const i of g.idx) {
-      const u = (CI[i] - g.c0 + 0.5) / g.wg, v = (YS[i] - yTop + 0.5) / H;
-      if (u > 0.34 && u < 0.66 && ((v > 0.22 && v < 0.36) || (v > 0.64 && v < 0.78))) hole++;
-      for (let z = 0; z < 7; z++) {
-        const Z = ZONES[z];
-        if (u >= Z[0] && u < Z[1] && v >= Z[2] && v < Z[3]) { cnt[z]++; break; }
-      }
+    for (const g of G) {
+      if (g.kind !== 'digit') continue;
+      // Normalise by the glyph's own strong segments (every digit lights at least 2).
+      const f = g.fills.map((x) => Math.min(1.2, x));
+      const ref = Math.max(0.25, [...f].sort((a, b) => b - a)[1]);
+      const { best, margin } = matchDigit(f.map((x) => Math.min(1, x / ref)));
+      const ok = best.cost <= 1.9 && g.holeFill < 0.3;
+      g.digit = ok ? best.d : null;
+      g.conf = ok ? Math.max(0, 1 - best.cost / 2.2) * (0.45 + 0.55 * Math.min(1, margin / 1.4)) : 0;
     }
-    g.fills = ZONES.map((Z, z) => cnt[z] / Math.max(1, (Z[1] - Z[0]) * g.wg * (Z[3] - Z[2]) * H));
-    g.holeFill = hole / Math.max(1, 0.32 * g.wg * 0.28 * H);
-    g.kind = 'digit';
-  }
-  for (const g of G) {
-    if (g.kind !== 'digit') continue;
-    // Normalise by the glyph's own strong segments (every digit lights at least 2).
-    const f = g.fills.map((x) => Math.min(1.2, x));
-    const ref = Math.max(0.25, [...f].sort((a, b) => b - a)[1]);
-    const { best, margin } = matchDigit(f.map((x) => Math.min(1, x / ref)));
-    const ok = best.cost <= 1.9 && g.holeFill < 0.3;
-    g.digit = ok ? best.d : null;
-    g.conf = ok ? Math.max(0, 1 - best.cost / 2.2) * (0.45 + 0.55 * Math.min(1, margin / 1.4)) : 0;
-  }
-  if (globalThis.__bpDebug) globalThis.__bpDebug.push({ band: [band.x0, band.y0, band.x1, band.y1, Math.round(H0)], yTop, yBot, shear, typW, glyphs: G.filter((g) => g.kind !== 'skip' || g.hg > 0.3 * H).map((g) => `${g.kind}:${g.digit ?? '-'}@${g.x0}-${g.x1} w${g.wg} h${g.hg}${g.fills ? ' f' + g.fills.map((f) => f.toFixed(1)).join('') + ' hole' + g.holeFill.toFixed(2) : ''}`) });
-  // Numbers = runs of decoded glyphs; split at failures and wide gaps.
-  const numbers = [];
-  let cur = [];
-  const emit = (gs, factor) => {
-    const x0 = Math.min(...gs.map((g) => g.x0)), x1 = Math.max(...gs.map((g) => g.x1));
-    const confs = gs.map((g) => g.conf);
-    const mean = confs.reduce((a, b) => a + b, 0) / confs.length;
-    const digits = gs.map((g) => g.digit).join('');
-    numbers.push({
-      digits, value: parseInt(digits, 10), conf: factor * (0.5 * mean + 0.5 * Math.min(...confs)) * (gs.some((g) => g.kind === 'digit') ? 1 : 0.6),
-      x0, x1, y0: Math.round(yTop), y1: Math.round(yBot), h: H, w: x1 - x0 + 1, cx: (x0 + x1) / 2, cy: (yTop + yBot) / 2, shear,
-      glyphs: gs.map((g) => ({ x0: g.x0, x1: g.x1, d: g.digit, conf: g.conf, fills: g.fills, hole: g.holeFill, wg: g.wg, hg: g.hg })),
-    });
-  };
-  const flush = () => {
-    if (cur.length) {
-      emit(cur, 1);
-      // Frame edges and bar graphs next to a number read as extra "1"s: also offer the
-      // 2-3 digit pieces (cheaper when a real digit is dropped than when a "1" is).
-      const n = cur.length;
-      if (n >= 3) {
-        for (let len = Math.min(3, n - 1); len >= 2; len--) {
-          for (let i = 0; i + len <= n; i++) {
-            const dropped = [...cur.slice(0, i), ...cur.slice(i + len)];
-            emit(cur.slice(i, i + len), dropped.every((g) => g.kind === 'one') ? 0.9 : 0.7);
+    if (globalThis.__bpDebug) globalThis.__bpDebug.push({ band: [band.x0, band.y0, band.x1, band.y1, Math.round(H0)], yTop, yBot, shear, typW, glyphs: G.filter((g) => g.kind !== 'skip' || g.hg > 0.3 * H).map((g) => `${g.kind}:${g.digit ?? '-'}@${g.x0}-${g.x1} w${g.wg} h${g.hg}${g.fills ? ' f' + g.fills.map((f) => f.toFixed(1)).join('') + ' hole' + g.holeFill.toFixed(2) : ''}`) });
+    // Numbers = runs of decoded glyphs; split at failures and wide gaps.
+    let cur = [];
+    const emit = (gs, factor) => {
+      const x0 = Math.min(...gs.map((g) => g.x0)), x1 = Math.max(...gs.map((g) => g.x1));
+      const confs = gs.map((g) => g.conf);
+      const mean = confs.reduce((a, b) => a + b, 0) / confs.length;
+      const digits = gs.map((g) => g.digit).join('');
+      numbers.push({
+        digits, value: parseInt(digits, 10), conf: factor * (0.5 * mean + 0.5 * Math.min(...confs)) * (gs.some((g) => g.kind === 'digit') ? 1 : 0.6),
+        x0, x1, y0: Math.round(yTop), y1: Math.round(yBot), h: H, w: x1 - x0 + 1, cx: (x0 + x1) / 2, cy: (yTop + yBot) / 2, shear,
+        glyphs: gs.map((g) => ({ x0: g.x0, x1: g.x1, d: g.digit, conf: g.conf, fills: g.fills, hole: g.holeFill, wg: g.wg, hg: g.hg })),
+      });
+    };
+    const flush = () => {
+      if (cur.length) {
+        emit(cur, alt);
+        // Frame edges and bar graphs next to a number read as extra "1"s: also offer the
+        // 2-3 digit pieces (cheaper when a real digit is dropped than when a "1" is).
+        const n = cur.length;
+        if (n >= 3) {
+          for (let len = Math.min(3, n - 1); len >= 2; len--) {
+            for (let i = 0; i + len <= n; i++) {
+              const dropped = [...cur.slice(0, i), ...cur.slice(i + len)];
+              emit(cur.slice(i, i + len), alt * (dropped.every((g) => g.kind === 'one') ? 0.9 : 0.7));
+            }
           }
         }
       }
+      cur = [];
+    };
+    let prev = null;
+    for (const g of G) {
+      if (g.kind === 'skip') continue;
+      if (!g.digit) { flush(); prev = null; continue; }
+      if (prev && g.c0 - prev.c1 > 0.8 * H) flush();
+      cur.push(g);
+      prev = g;
     }
-    cur = [];
+    flush();
   };
-  let prev = null;
-  for (const g of G) {
-    if (g.kind === 'skip') continue;
-    if (!g.digit) { flush(); prev = null; continue; }
-    if (prev && g.c0 - prev.c1 > 0.8 * H) flush();
-    cur.push(g);
-    prev = g;
-  }
-  flush();
+  segment(2, 1);
   return numbers;
 }
 
@@ -512,11 +530,14 @@ export function pickReading(numbers) {
       let P = null, pScore = 0;
       for (const p of cand) {
         if (p === S || p === D || p.value < 30 || p.value > 200 || p.h > 1.15 * Math.max(S.h, D.h) || p.h < 0.3 * D.h) continue;
-        if (overlapFrac(p, S) > 0.2 || overlapFrac(p, D) > 0.2) continue;
+        if (overlapFrac(p, S) > 0.2 || overlapFrac(p, D) > 0.2 || !/[02-9]/.test(p.digits)) continue;
         const below = p.cy > D.cy - 0.3 * D.h;
         const right = p.cx > Math.max(S.cx, D.cx);
         if (!below && !right) continue;
-        const ps = 0.3 + 0.7 * p.conf + (below ? 0.1 : 0);
+        // Pulse sits under DIA, right-aligned with it, or to the right; memory counters and
+        // clocks sit further left.
+        const aligned = Math.abs(p.x1 - D.x1) < 0.7 * D.h || p.x0 > D.x1 - 0.2 * D.h;
+        const ps = 0.3 + 0.7 * p.conf + (below ? 0.1 : 0) + (aligned ? 0.25 : 0);
         if (ps > pScore) { pScore = ps; P = p; }
       }
       score += pScore;
@@ -577,6 +598,9 @@ export function readDisplay(img, opts = {}) {
     w = nw; h = nh;
   }
   const minDim = Math.min(w, h);
+  // Light blur against sensor noise and LCD texture.
+  const blurR = opts.blur ?? Math.max(1, Math.round(minDim / 450));
+  gray = boxBlur(gray, w, h, blurR);
   const rads = [0.012, 0.025, 0.05].map((f) => Math.max(2, Math.round(f * minDim)));
   const ks = [0.18, 0.3];
   const radii = [0, 1, 2, 3, 5].filter((r) => r < minDim / 25);
@@ -599,6 +623,7 @@ export function readDisplay(img, opts = {}) {
   if (!strong()) {
     let gm = toGray(img.data, img.width, img.height, 'max');
     if (scale !== 1) gm = resizeGray(gm, img.width, img.height, w, h);
+    gm = boxBlur(gm, w, h, blurR);
     pass(gm, 'max', false);
     if (!strong()) pass(gm, 'max', true);
   }
