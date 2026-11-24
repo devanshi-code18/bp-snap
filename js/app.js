@@ -10,6 +10,20 @@ const VERSION = '1.0.0';
 const REPO = 'https://github.com/devanshi-code18/bp-snap';
 const COLORS = ['#c2352f', '#2f6fd1', '#2e9d5b', '#8a4fd1', '#e07b00', '#0e9aa7', '#d14f9b', '#6d6966'];
 
+const ICONS = {
+  camera: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
+  pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  select: '<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>',
+  rotate: '<path d="M21 2v6h-6"/><path d="M21 13a9 9 0 1 1-3-7.7L21 8"/>',
+  print: '<path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  share: '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
+};
+const icon = (n) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -68,6 +82,15 @@ function download(name, data, type) {
   document.body.appendChild(a);
   a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+
+// On iPhone the share sheet is the natural way to put a file in Files / iCloud Drive or email it.
+async function saveFile(name, blob, title) {
+  const file = new File([blob], name, { type: blob.type });
+  if (isIOS() && navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title }); return; } catch (err) { if (err.name === 'AbortError') return; }
+  }
+  download(name, blob);
 }
 
 const person = () => state.people.find((p) => p.id === state.personId);
@@ -219,7 +242,7 @@ function itemHTML(r) {
   const c = S.category(r.sys, r.dia);
   return `<li><a class="item" href="#/r/${r.id}"><span class="catdot" style="background:${c?.color}" title="${esc(c?.label)}"></span>
     <span class="val">${r.sys}/${r.dia}</span>
-    <span class="meta">${r.pulse ? `♥ ${r.pulse} · ` : ''}${fmtTime(r.takenAt)} · ${todLabel(r.takenAt)}${r.notes ? ' · 📝' : ''}${r.hasPhoto ? ' · 📷' : ''}</span>
+    <span class="meta">${r.pulse ? `♥ ${r.pulse} · ` : ''}${fmtTime(r.takenAt)} · ${todLabel(r.takenAt)}${r.notes ? ' · note' : ''}${r.hasPhoto ? ' · photo' : ''}</span>
     <span class="chev" aria-hidden="true">›</span></a></li>`;
 }
 
@@ -246,13 +269,14 @@ async function home() {
       <p class="muted">Measure as usual. When the final numbers show, take a photo of the monitor's screen. BP Snap reads them; you check and save.</p>`}
   </section>
   <div class="actions">
-    <button class="btn primary big" data-act="cam">📷 Take photo of monitor</button>
-    <button class="btn" data-act="lib">🖼️ Choose a photo</button>
-    <a class="btn" href="#/manual">⌨️ Type it in</a>
+    <button class="btn primary big" data-act="cam">${icon('camera')} Take photo of monitor</button>
+    <button class="btn" data-act="lib">${icon('image')} Choose a photo</button>
+    <a class="btn" href="#/manual">${icon('pencil')} Type it in</a>
   </div>
   ${rs.length ? `<section class="card"><h2>Averages</h2>
     <div class="stats">${statBox('Last 7 days', s7)}${statBox('Last 30 days', s30)}${statBox('Mornings, 30 days', tod.morning)}${statBox('Evenings, 30 days', tod.evening)}</div>
     ${s7.count ? `<p class="small" style="margin-top:.6rem">7-day average: ${chip(s7.category)} <span class="muted">${esc(s7.category.label)}</span></p>` : ''}
+    <p class="small muted">${esc(adherence(rs))}</p>
   </section>
   <section class="card"><h2>Trend <span class="seg" id="range">${RANGES.map(([d, l]) => `<button data-d="${d}" class="${d === range ? 'on' : ''}">${l}</button>`).join('')}</span></h2>
     <div id="chart">${chartSVG(rs, { from: rangeFrom(range, rs), to: Date.now() })}</div></section>
@@ -267,6 +291,17 @@ async function home() {
     $$('#range button').forEach((x) => x.classList.toggle('on', x === b));
     $('#chart').innerHTML = chartSVG(rs, { from: rangeFrom(d, rs), to: Date.now() });
   }));
+}
+
+// How regularly readings were taken in the last 7 days (doctors ask for morning + evening).
+function adherence(rs) {
+  const am = new Set(), pm = new Set();
+  for (const r of S.lastDays(rs, 7)) {
+    const day = new Date(r.takenAt).toDateString(), t = S.timeOfDay(r.takenAt);
+    if (t === 'morning') am.add(day);
+    if (t === 'evening' || t === 'night') pm.add(day);
+  }
+  return `Last 7 days: mornings on ${am.size} of 7 days, evenings on ${pm.size} of 7.`;
 }
 
 function tipsCard(open = false) {
@@ -378,9 +413,9 @@ async function reviewPhoto() {
     <h2>Check the numbers</h2>
     <div class="photo-wrap" id="pw"><canvas class="photo" id="photo"></canvas><div class="overlay" id="ov"></div></div>
     <div class="row" style="margin-top:.5rem">
-      <button type="button" class="btn small" id="sel">⬚ Select numbers</button>
-      <button type="button" class="btn small" id="rot">↻ Rotate</button>
-      <button type="button" class="btn small" id="retake">📷 Retake</button>
+      <button type="button" class="btn small" id="sel">${icon('select')} Select numbers</button>
+      <button type="button" class="btn small" id="rot">${icon('rotate')} Rotate</button>
+      <button type="button" class="btn small" id="retake">${icon('camera')} Retake</button>
     </div>
     <p id="ocr-status" class="status busy">Reading the numbers…</p>
     ${formHTML({ ...(d.values || {}), takenAt: d.takenAt }, { timeHint: d.timeHint })}
@@ -486,10 +521,10 @@ async function runReader(crop = null) {
     }
     const sure = res.confidence >= 0.5 && res.pulse != null;
     setStatus(sure ? 'ok' : 'warn', `${sure ? 'Read' : 'Best guess'}: <b>${res.sys}/${res.dia}</b>${res.pulse != null ? `, pulse <b>${res.pulse}</b>` : ', no pulse found'}. Check them against the monitor and fix anything that's off.
-      <br><span class="small muted">Wrong? Tap ⬚ Select numbers and drag a box around the screen's numbers.</span>`);
+      <br><span class="small muted">Wrong? Tap <b>Select numbers</b> and drag a box around the screen's numbers.</span>`);
   } else {
     drawBoxes([]);
-    setStatus('warn', `Couldn't read the numbers in this photo. Tap <b>⬚ Select numbers</b> and drag a box around them, or type them in below.`);
+    setStatus('warn', `Couldn't read the numbers in this photo. Tap <b>Select numbers</b> and drag a box around them, or type them in below.`);
   }
 }
 
@@ -600,10 +635,13 @@ async function history() {
   }
   let html = `<section class="card"><h2>${esc(person().name)} · ${plural(rs.length, 'reading')}</h2>`;
   let day = null;
-  for (const r of rs) {
-    const dl = dayLabel(r.takenAt);
+  // Newest first; readings minutes apart are one sitting and get an average line.
+  const sits = S.sessions(rs).reverse();
+  for (const sit of sits) {
+    const dl = dayLabel(sit.takenAt);
     if (dl !== day) { html += `${day ? '</ul>' : ''}<div class="day">${esc(dl)}</div><ul class="list">`; day = dl; }
-    html += itemHTML(r);
+    html += [...sit.readings].reverse().map(itemHTML).join('');
+    if (sit.readings.length > 1) html += `<li class="session">Average of these ${sit.readings.length}: <b>${sit.sys}/${sit.dia}</b>${sit.pulse ? `, pulse ${sit.pulse}` : ''}</li>`;
   }
   html += '</ul></section>';
   view.innerHTML = html;
@@ -629,7 +667,7 @@ async function report() {
   const rows = [...rs].sort((a, b) => a.takenAt - b.takenAt).map((r) => `<tr><td>${esc(fmtDate(r.takenAt))}</td><td>${fmtTime(r.takenAt)}</td><td><b>${r.sys}/${r.dia}</b></td><td>${r.pulse ?? ''}</td><td>${esc([r.arm && `${r.arm} arm`, r.position !== 'sitting' ? r.position : '', r.notes].filter(Boolean).join(' · '))}</td></tr>`).join('');
   view.innerHTML = `<section class="card no-print"><div class="spread"><label for="rr" class="f" style="margin:0">Period</label>
       <select id="rr" style="width:auto">${REPORT_RANGES.map(([d, l]) => `<option value="${d}" ${d === days ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-    <div class="row" style="margin-top:.8rem"><button class="btn small" id="print">🖨️ Print / PDF</button><button class="btn small" id="csv">⬇️ CSV</button>${navigator.share ? '<button class="btn small" id="share">📤 Share</button>' : ''}</div>
+    <div class="row" style="margin-top:.8rem"><button class="btn small" id="print">${icon('print')} Print / PDF</button><button class="btn small" id="csv">${icon('download')} CSV</button>${navigator.share ? `<button class="btn small" id="share">${icon('share')} Share</button>` : ''}</div>
   </section>
   <section class="card"><h1 style="font-size:1.3rem">Blood pressure report: ${esc(p.name)}</h1>
     <p class="muted small">${rs.length ? `${esc(fmtDate(s.first))} to ${esc(fmtDate(s.last))}` : 'No readings in this period'} · made ${esc(fmtDate(Date.now()))} with BP Snap</p>
@@ -691,13 +729,13 @@ async function settingsView() {
   <section class="card"><h2>Back up and export</h2>
     <p class="small muted">Readings live only in this browser on this phone. Keep a backup somewhere safe (Files, iCloud Drive, email).${last ? ` Last backup: ${esc(fmtDate(last))}.` : ''}</p>
     <label class="row small"><input type="checkbox" id="bk-photos" style="width:auto"> Include photos (bigger file)</label>
-    <div class="row" style="margin-top:.5rem"><button class="btn small" id="backup">💾 Save backup</button><button class="btn small" id="restore">📂 Restore backup</button><button class="btn small" id="csv-all">⬇️ CSV, everyone</button></div></section>
+    <div class="row" style="margin-top:.5rem"><button class="btn small" id="backup">${icon('save')} Save backup</button><button class="btn small" id="restore">${icon('upload')} Restore backup</button><button class="btn small" id="csv-all">${icon('download')} CSV, everyone</button></div></section>
 
   <section class="card"><h2>Daily reminders</h2>
     <p class="small muted">Adds repeating events with an alert to your phone's calendar.</p>
     <div class="row"><label class="small">Morning <input type="time" id="rem-am" value="${esc(settings.get('remAm', '07:30'))}" style="width:auto"></label>
       <label class="small">Evening <input type="time" id="rem-pm" value="${esc(settings.get('remPm', '19:30'))}" style="width:auto"></label></div>
-    <button class="btn small" id="rem" style="margin-top:.6rem">📅 Add to calendar</button></section>
+    <button class="btn small" id="rem" style="margin-top:.6rem">${icon('calendar')} Add to calendar</button></section>
 
   <section class="card"><h2>Photos</h2>
     <label class="row small"><input type="checkbox" id="keep" style="width:auto" ${keep ? 'checked' : ''}> Keep a small copy of each photo with its reading</label>
@@ -713,9 +751,11 @@ async function settingsView() {
   $('#csv-all').addEventListener('click', async () => download(`bp-all-${today()}.csv`, S.toCSV(await db.allReadings(), peopleById()), 'text/csv'));
   $('#backup').addEventListener('click', async () => {
     const data = await db.exportAll({ photos: $('#bk-photos').checked });
-    download(`bp-snap-backup-${today()}.json`, JSON.stringify(data), 'application/json');
+    const name = `bp-snap-backup-${today()}.json`;
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    await saveFile(name, blob, 'BP Snap backup');
     settings.set('lastBackup', Date.now());
-    toast(`Backup saved: ${plural(data.readings.length, 'reading')}`);
+    toast(`Backup ready: ${plural(data.readings.length, 'reading')}`);
   });
   $('#restore').addEventListener('click', () => $('#restore-file').click());
   $('#rem').addEventListener('click', () => {

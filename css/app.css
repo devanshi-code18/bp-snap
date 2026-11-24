@@ -78,9 +78,9 @@ main { max-width: 640px; margin: 0 auto; padding: 1rem; outline: none; }
   background: var(--card); border-top: 1px solid var(--line);
 }
 .tabs a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: .75rem; color: var(--muted); text-decoration: none; }
-.tabs a span { font-size: 1.25rem; filter: grayscale(1); opacity: .7; }
+.tabs a svg, .ic { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ic { width: 1.2em; height: 1.2em; flex: none; }
 .tabs a.active { color: var(--brand); font-weight: 600; }
-.tabs a.active span { filter: none; opacity: 1; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
@@ -142,6 +142,7 @@ main { max-width: 640px; margin: 0 auto; padding: 1rem; outline: none; }
 .item .meta { flex: 1; min-width: 0; font-size: .85rem; color: var(--muted); }
 .item .catdot { width: .65rem; height: .65rem; border-radius: 50%; flex: none; }
 .item .chev { color: var(--muted); }
+.session { font-size: .8rem; color: var(--muted); padding: 0 0 .5rem 1.4rem; margin-top: -.3rem; }
 .day { font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 1rem 0 .2rem; }
 
 .review .photo-wrap { position: relative; border-radius: 12px; overflow: hidden; background: #000; touch-action: none; user-select: none; -webkit-user-select: none; }
