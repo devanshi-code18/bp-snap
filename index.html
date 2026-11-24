@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>BP Snap: blood pressure log from a photo</title>
+  <meta name="description" content="Take a photo of your blood pressure monitor. BP Snap reads the numbers and keeps a log on your phone.">
+  <meta name="theme-color" content="#c2352f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="BP Snap">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/home" aria-label="BP Snap home"><img src="icons/icon-192.png" alt="" width="28" height="28"> BP Snap</a>
+    <button id="person-btn" class="person-btn" type="button" aria-haspopup="dialog" hidden>
+      <span class="dot"></span><span class="name"></span><span aria-hidden="true">▾</span>
+    </button>
+  </header>
+
+  <main id="view" tabindex="-1"></main>
+
+  <nav class="tabs" aria-label="Sections">
+    <a href="#/home" data-tab="home"><span aria-hidden="true">🏠</span>Home</a>
+    <a href="#/history" data-tab="history"><span aria-hidden="true">📋</span>History</a>
+    <a href="#/report" data-tab="report"><span aria-hidden="true">📈</span>Report</a>
+    <a href="#/settings" data-tab="settings"><span aria-hidden="true">⚙️</span>Settings</a>
+  </nav>
+
+  <input id="cam" type="file" accept="image/*" capture="environment" hidden>
+  <input id="lib" type="file" accept="image/*" hidden>
+  <input id="restore-file" type="file" accept="application/json,.json" hidden>
+
+  <dialog id="sheet" class="sheet"></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <noscript><p class="pad">BP Snap needs JavaScript to run.</p></noscript>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
