@@ -762,7 +762,9 @@ async function report() {
     return `<tr><td>${t.label}</td><td>${x.sys}/${x.dia}</td><td>${x.pulse ?? '–'}</td><td>${x.count}</td></tr>`;
   }).join('');
   const catRows = S.CATEGORIES.filter((c) => cats[c.key]).map((c) => `<tr><td>${chip(c)} ${esc(c.label)}</td><td>${cats[c.key]}</td><td>${Math.round((100 * cats[c.key]) / rs.length)}%</td></tr>`).join('');
-  const rows = [...rs].sort((a, b) => a.takenAt - b.takenAt).map((r) => `<tr><td>${esc(fmtDate(r.takenAt))}</td><td>${fmtTime(r.takenAt)}</td><td><b>${r.sys}/${r.dia}</b></td><td>${r.pulse ?? ''}</td><td>${esc([r.arm && `${r.arm} arm`, r.position !== 'sitting' ? r.position : '', r.notes].filter(Boolean).join(' · '))}</td></tr>`).join('');
+  // Only mention the arm when both arms were used in this period.
+  const mixedArms = new Set(rs.map((r) => r.arm).filter(Boolean)).size > 1;
+  const rows = [...rs].sort((a, b) => a.takenAt - b.takenAt).map((r) => `<tr><td>${esc(fmtDate(r.takenAt))}</td><td>${fmtTime(r.takenAt)}</td><td><b>${Number(r.sys)}/${Number(r.dia)}</b></td><td>${r.pulse != null ? Number(r.pulse) : ''}</td><td>${esc([mixedArms && r.arm && `${r.arm} arm`, r.position && r.position !== 'sitting' ? r.position : '', r.notes].filter(Boolean).join(' · '))}</td></tr>`).join('');
   view.innerHTML = `<section class="card no-print"><div class="spread"><label for="rr" class="f" style="margin:0">Period</label>
       <select id="rr" style="width:auto">${REPORT_RANGES.map(([d, l]) => `<option value="${d}" ${d === days ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     <div class="row" style="margin-top:.8rem"><button class="btn small" id="print">${icon('print')} Print / PDF</button><button class="btn small" id="csv">${icon('download')} CSV</button>${navigator.share ? `<button class="btn small" id="share">${icon('share')} Share</button>` : ''}</div>
