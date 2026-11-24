@@ -47,7 +47,7 @@ export async function putPerson(p) { await done((await store('people', 'readwrit
 
 export async function readingsFor(personId) {
   const list = await done((await store('readings')).index('person').getAll(personId));
-  return list.sort((a, b) => b.takenAt - a.takenAt);
+  return list.sort((a, b) => b.takenAt - a.takenAt || (b.createdAt || 0) - (a.createdAt || 0));
 }
 export async function allReadings() { return done((await store('readings')).getAll()); }
 export async function putReading(r) { await done((await store('readings', 'readwrite')).put(r)); return r; }

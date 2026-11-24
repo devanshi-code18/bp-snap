@@ -8,6 +8,7 @@
   "scripts": {
     "test": "node --test tests/*.test.mjs",
     "eval": "node tests/eval-synth.mjs 60",
+    "e2e": "node tests/e2e.mjs",
     "serve": "python3 -m http.server 8080"
   }
 }

@@ -96,6 +96,45 @@ export function binarize(gray, I, w, h, win, k, invert) {
   return out;
 }
 
+// Sliding max (isMax) or min over a (2r+1)^2 square, separable, O(n) with a monotonic deque.
+function extreme(src, w, h, r, isMax) {
+  const tmp = new Uint8Array(w * h), out = new Uint8Array(w * h);
+  const dq = new Int32Array(Math.max(w, h) + 1);
+  const pass = (a, b, n, m, idx) => {
+    for (let j = 0; j < m; j++) {
+      let head = 0, tail = 0;
+      for (let i = 0; i < n + r; i++) {
+        if (i < n) {
+          const v = a[idx(j, i)];
+          while (tail > head && (isMax ? a[idx(j, dq[tail - 1])] <= v : a[idx(j, dq[tail - 1])] >= v)) tail--;
+          dq[tail++] = i;
+        }
+        const c = i - r;
+        if (c < 0) continue;
+        while (dq[head] < c - r) head++;
+        b[idx(j, c)] = a[idx(j, dq[head])];
+      }
+    }
+  };
+  pass(src, tmp, w, h, (y, x) => y * w + x);
+  pass(tmp, out, h, w, (x, y) => y * w + x);
+  return out;
+}
+
+// Ink = darker than the local background by a margin. The background is a grey closing
+// (max then min) with radius r, which erases strokes thinner than ~2r but keeps large
+// regions (a whole LCD panel darker than the case stays background).
+export function inkMask(gray, w, h, r, k, invert) {
+  const bg = invert ? extreme(extreme(gray, w, h, r, false), w, h, r, true) : extreme(extreme(gray, w, h, r, true), w, h, r, false);
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const g = gray[i], b = bg[i];
+    if (invert) { if (g - b > Math.max(24, k * g)) out[i] = 1; }
+    else if (b - g > Math.max(16, k * b)) out[i] = 1;
+  }
+  return out;
+}
+
 // Rectangular dilation with radii rx, ry (separable, sliding counts).
 export function dilate(bin, w, h, rx, ry = rx) {
   if (rx <= 0 && ry <= 0) return bin;
@@ -309,13 +348,26 @@ function readBand(bin, w, h, band) {
   const CI = new Int32Array(n);
   for (let i = 0; i < n; i++) { const c = Math.round(XS[i] - shear * (YS[i] - cy)) - xA + off; CI[i] = c; cols[c]++; }
   // Column runs (allow 1 empty column inside a digit).
-  const runs = [];
+  const runs0 = [];
   for (let j = 0; j < span; j++) {
     if (cols[j] < 2) continue;
-    const last = runs[runs.length - 1];
+    const last = runs0[runs0.length - 1];
     if (last && j - last[1] <= 2) last[1] = j;
-    else runs.push([j, j]);
+    else runs0.push([j, j]);
   }
+  // Touching digits: split a run that is too wide at its emptiest column.
+  const runs = [];
+  const splitRun = ([a, b]) => {
+    if (b - a + 1 <= 0.8 * H0) { runs.push([a, b]); return; }
+    let best = -1, bv = Infinity;
+    const lo = a + Math.max(2, Math.round(0.12 * (b - a))), hi = b - Math.max(2, Math.round(0.12 * (b - a)));
+    for (let j = lo; j <= hi; j++) if (cols[j] < bv) { bv = cols[j]; best = j; }
+    const sorted = [...cols.subarray(a, b + 1)].sort((x, y) => x - y);
+    if (best < 0 || bv > 0.25 * sorted[sorted.length >> 1]) { runs.push([a, b]); return; }
+    splitRun([a, best - 1]);
+    splitRun([best + 1, b]);
+  };
+  for (const r of runs0) splitRun(r);
   const runOf = new Int32Array(span).fill(-1);
   runs.forEach(([a, b], k) => { for (let j = a; j <= b; j++) runOf[j] = k; });
   const G = runs.map(([c0, c1]) => ({ c0, c1, wg: c1 - c0 + 1, y0: Infinity, y1: -1, x0: Infinity, x1: -1, idx: [] }));
@@ -381,20 +433,35 @@ function readBand(bin, w, h, band) {
     g.digit = ok ? best.d : null;
     g.conf = ok ? Math.max(0, 1 - best.cost / 2.2) * (0.45 + 0.55 * Math.min(1, margin / 1.4)) : 0;
   }
+  if (globalThis.__bpDebug) globalThis.__bpDebug.push({ band: [band.x0, band.y0, band.x1, band.y1, Math.round(H0)], yTop, yBot, shear, typW, glyphs: G.filter((g) => g.kind !== 'skip' || g.hg > 0.3 * H).map((g) => `${g.kind}:${g.digit ?? '-'}@${g.x0}-${g.x1} w${g.wg} h${g.hg}${g.fills ? ' f' + g.fills.map((f) => f.toFixed(1)).join('') + ' hole' + g.holeFill.toFixed(2) : ''}`) });
   // Numbers = runs of decoded glyphs; split at failures and wide gaps.
   const numbers = [];
   let cur = [];
+  const emit = (gs, factor) => {
+    const x0 = Math.min(...gs.map((g) => g.x0)), x1 = Math.max(...gs.map((g) => g.x1));
+    const confs = gs.map((g) => g.conf);
+    const mean = confs.reduce((a, b) => a + b, 0) / confs.length;
+    const digits = gs.map((g) => g.digit).join('');
+    numbers.push({
+      digits, value: parseInt(digits, 10), conf: factor * (0.5 * mean + 0.5 * Math.min(...confs)) * (gs.some((g) => g.kind === 'digit') ? 1 : 0.6),
+      x0, x1, y0: Math.round(yTop), y1: Math.round(yBot), h: H, w: x1 - x0 + 1, cx: (x0 + x1) / 2, cy: (yTop + yBot) / 2, shear,
+      glyphs: gs.map((g) => ({ x0: g.x0, x1: g.x1, d: g.digit, conf: g.conf, fills: g.fills, hole: g.holeFill, wg: g.wg, hg: g.hg })),
+    });
+  };
   const flush = () => {
     if (cur.length) {
-      const x0 = Math.min(...cur.map((g) => g.x0)), x1 = Math.max(...cur.map((g) => g.x1));
-      const confs = cur.map((g) => g.conf);
-      const mean = confs.reduce((a, b) => a + b, 0) / confs.length;
-      const digits = cur.map((g) => g.digit).join('');
-      numbers.push({
-        digits, value: parseInt(digits, 10), conf: (0.5 * mean + 0.5 * Math.min(...confs)) * (cur.some((g) => g.kind === 'digit') ? 1 : 0.8),
-        x0, x1, y0: Math.round(yTop), y1: Math.round(yBot), h: H, w: x1 - x0 + 1, cx: (x0 + x1) / 2, cy: (yTop + yBot) / 2, shear,
-        glyphs: cur.map((g) => ({ x0: g.x0, x1: g.x1, d: g.digit, conf: g.conf, fills: g.fills, hole: g.holeFill, wg: g.wg, hg: g.hg })),
-      });
+      emit(cur, 1);
+      // Frame edges and bar graphs next to a number read as extra "1"s: also offer the
+      // 2-3 digit pieces (cheaper when a real digit is dropped than when a "1" is).
+      const n = cur.length;
+      if (n >= 3) {
+        for (let len = Math.min(3, n - 1); len >= 2; len--) {
+          for (let i = 0; i + len <= n; i++) {
+            const dropped = [...cur.slice(0, i), ...cur.slice(i + len)];
+            emit(cur.slice(i, i + len), dropped.every((g) => g.kind === 'one') ? 0.9 : 0.7);
+          }
+        }
+      }
     }
     cur = [];
   };
@@ -418,14 +485,16 @@ const overlapFrac = (a, b) => {
 // Choose SYS / DIA / PULSE among the numbers read.
 export function pickReading(numbers) {
   const cand = [];
-  for (const n of numbers) {
-    if (n.digits.length < 2 || n.digits.length > 3 || n.conf < 0.2 || n.digits[0] === '0') continue;
+  for (const n0 of numbers) {
+    if (n0.digits.length < 2 || n0.digits.length > 3 || n0.conf < 0.2 || n0.digits[0] === '0') continue;
+    const n = { ...n0, conf: n0.eff ?? n0.conf };
     const dup = cand.find((c) => c.digits === n.digits && overlapFrac(c, n) > 0.5);
     if (dup) { if (n.conf > dup.conf) Object.assign(dup, n); continue; }
-    cand.push({ ...n });
+    cand.push(n);
   }
   if (cand.length < 2) return null;
-  const maxH = Math.max(...cand.map((n) => n.h));
+  const real = cand.filter((n) => /[02-9]/.test(n.digits) && n.conf > 0.3);
+  const maxH = Math.max(...(real.length ? real : cand).map((n) => n.h));
   let best = null;
   for (const S of cand) {
     if (S.value < 60 || S.value > 260) continue;
@@ -437,10 +506,12 @@ export function pickReading(numbers) {
         Math.min(S.x1, D.x1) - Math.max(S.x0, D.x0) > -0.6 * Math.max(S.h, D.h);
       const side = Math.abs(S.cy - D.cy) < 0.4 * Math.min(S.h, D.h) && S.cx < D.cx;
       if (!stacked && !side) continue;
-      let score = 1 + S.conf + D.conf + 0.6 * ((S.h + D.h) / (2 * maxH));
+      let score = 1 + S.conf + D.conf + 0.6 * Math.min(1, (S.h + D.h) / (2 * maxH));
+      // Usual layout: DIA right under SYS.
+      if (stacked && D.y0 - S.y1 < 0.6 * Math.min(S.h, D.h)) score += 0.3;
       let P = null, pScore = 0;
       for (const p of cand) {
-        if (p === S || p === D || p.value < 30 || p.value > 200 || p.h > 1.15 * Math.max(S.h, D.h)) continue;
+        if (p === S || p === D || p.value < 30 || p.value > 200 || p.h > 1.15 * Math.max(S.h, D.h) || p.h < 0.3 * D.h) continue;
         if (overlapFrac(p, S) > 0.2 || overlapFrac(p, D) > 0.2) continue;
         const below = p.cy > D.cy - 0.3 * D.h;
         const right = p.cx > Math.max(S.cx, D.cx);
@@ -470,9 +541,20 @@ function analyze(bin, w, h, radii) {
   return { numbers, pick, score: pick ? pick.score : 0, bands: bands.length };
 }
 
+// Merge the numbers read under different thresholds: the same digits at the same place
+// count as votes. Stable reads win over one-off ones.
+function consolidate(all, runs) {
+  const groups = [];
+  for (const n of all) {
+    const g = groups.find((x) => x.n.digits === n.digits && overlapFrac(x.n, n) > 0.5);
+    if (g) { g.runs.add(n.run); if (n.conf > g.n.conf) g.n = n; } else groups.push({ n, runs: new Set([n.run]) });
+  }
+  return groups.map(({ n, runs: r }) => ({ ...n, votes: r.size, eff: n.conf * (0.35 + 0.65 * Math.min(1, r.size / Math.max(1, runs * 0.5))) }));
+}
+
 // Test hook: one binarization with fixed parameters on a gray image.
-export function _debugAnalyze(gray, w, h, { win, k, invert, radii = [0, 1, 2, 3, 5] }) {
-  const bin = binarize(gray, integral(gray, w, h), w, h, win, k, invert);
+export function _debugAnalyze(gray, w, h, { win, R, k, invert, radii = [0, 1, 2, 3, 5] }) {
+  const bin = R ? inkMask(gray, w, h, R, k, invert) : binarize(gray, integral(gray, w, h), w, h, win, k, invert);
   return analyze(bin, w, h, radii);
 }
 
@@ -495,38 +577,41 @@ export function readDisplay(img, opts = {}) {
     w = nw; h = nh;
   }
   const minDim = Math.min(w, h);
-  const wins = [Math.max(15, Math.round(minDim / 2.5)) | 1, Math.max(11, Math.round(minDim / 6)) | 1];
-  const ks = [0.1, 0.2];
+  const rads = [0.012, 0.025, 0.05].map((f) => Math.max(2, Math.round(f * minDim)));
+  const ks = [0.18, 0.3];
   const radii = [0, 1, 2, 3, 5].filter((r) => r < minDim / 25);
-  let best = null, tried = 0;
-  const good = 3.3;
-  const run = (g, mode) => {
-    const I = integral(g, w, h);
-    for (const invert of [false, true]) {
+  const all = [];
+  let runs = 0, best = null;
+  const pass = (g, mode, invert) => {
+    for (const R of rads) {
       for (const k of ks) {
-        for (const win of wins) {
-          tried++;
-          const res = analyze(binarize(g, I, w, h, win, k, invert), w, h, radii);
-          if (res.pick && (!best || res.score > best.score)) best = { ...res, params: { mode, invert, win, k } };
-          if (best && best.score > good) return;
-        }
+        runs++;
+        for (const n of analyze(inkMask(g, w, h, R, k, invert), w, h, radii).numbers) { n.run = runs; n.mode = mode; n.invert = invert; all.push(n); }
       }
-      if (best && best.score > 3.0) return;
     }
+    const numbers = consolidate(all, runs);
+    const pick = pickReading(numbers);
+    best = pick ? { numbers, pick, score: pick.score } : best && { ...best, numbers };
   };
-  run(gray, 'luma');
-  if (!best || best.score < 3.0) {
+  const strong = () => best && best.pick.S.votes >= 3 && best.pick.D.votes >= 3 && best.score > 2.6;
+  pass(gray, 'luma', false);
+  if (!strong()) pass(gray, 'luma', true);
+  if (!strong()) {
     let gm = toGray(img.data, img.width, img.height, 'max');
     if (scale !== 1) gm = resizeGray(gm, img.width, img.height, w, h);
-    run(gm, 'max');
+    pass(gm, 'max', false);
+    if (!strong()) pass(gm, 'max', true);
   }
+  const tried = runs;
+  if (best && best.pick) best.params = { runs, sysVotes: best.pick.S.votes, diaVotes: best.pick.D.votes };
   const ms = Date.now() - t0;
-  if (!best) return { ok: false, confidence: 0, boxes: [], numbers: [], ms, tried };
+  if (!best || !best.pick) return { ok: false, confidence: 0, boxes: [], numbers: [], ms, tried };
   const inv = 1 / scale;
   const toBox = (n, lab) => ({ x: n.x0 * inv, y: n.y0 * inv, w: (n.x1 - n.x0 + 1) * inv, h: (n.y1 - n.y0 + 1) * inv, label: lab, value: n.value });
   const { S, D, P } = best.pick;
   const confs = [S.conf, D.conf].concat(P ? [P.conf] : []);
   const confidence = Math.max(0, Math.min(1, (confs.reduce((a, b) => a + b, 0) / confs.length) * (P ? 1 : 0.9)));
+  if (confidence < (opts.minConfidence ?? 0.28)) return { ok: false, confidence, boxes: [], numbers: [], ms, tried, guess: { sys: S.value, dia: D.value, pulse: P ? P.value : null } };
   return {
     ok: true,
     sys: S.value, dia: D.value, pulse: P ? P.value : null,

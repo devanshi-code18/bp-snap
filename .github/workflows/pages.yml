@@ -25,9 +25,25 @@ jobs:
           node-version: 22
       - run: npm test
 
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save puppeteer-core@25
+      - name: iPhone-sized browser smoke test
+        run: CHROME_PATH="$(command -v google-chrome || command -v chromium)" node tests/e2e.mjs /tmp/bp-e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots
+          path: /tmp/bp-e2e/*.png
+
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: test
+    needs: [test, e2e]
     runs-on: ubuntu-latest
     environment:
       name: github-pages

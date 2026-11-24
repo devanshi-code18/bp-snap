@@ -199,7 +199,7 @@ function installBanner() {
   if (Date.now() - dismissed < 14 * 86400000) return '';
   return `<section class="card banner" id="install"><div>
     <strong>Add BP Snap to your Home Screen</strong>
-    <p class="small">In Safari, tap the Share button <span aria-hidden="true">(□↑)</span>, then <b>Add to Home Screen</b>. It opens like an app, works offline, and Safari won't clear your readings.</p></div>
+    <p class="small">In Safari, tap the Share button <svg class="share-ic" viewBox="0 0 20 24" width="14" height="17" aria-label="Share"><path d="M10 1v14M5.5 5.5 10 1l4.5 4.5M6 9H3v14h14V9h-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>, then <b>Add to Home Screen</b>. It opens like an app, works offline, and Safari won't clear your readings.</p></div>
     <button class="x" aria-label="Dismiss" data-dismiss>×</button></section>`;
 }
 
@@ -323,7 +323,7 @@ function formHTML(v, opts = {}) {
       <div><label class="f" for="f-pulse">Pulse</label><input id="f-pulse" name="pulse" inputmode="numeric" pattern="[0-9]*" maxlength="3" autocomplete="off" value="${v.pulse ?? ''}"></div>
     </div>
     <label class="f" for="f-time">Date and time</label>
-    <input id="f-time" name="time" type="datetime-local" value="${toLocalInput(v.takenAt ?? Date.now())}">
+    <input id="f-time" name="time" type="datetime-local" value="${toLocalInput(v.takenAt ?? Date.now())}" data-orig="${v.takenAt ?? ''}">
     ${opts.timeHint ? `<p class="muted small">${esc(opts.timeHint)}</p>` : ''}
     <label class="f">Arm</label><div class="pills">${pill('arm', 'left', 'Left', arm)}${pill('arm', 'right', 'Right', arm)}</div>
     <label class="f">Position</label><div class="pills">${pill('position', 'sitting', 'Sitting', pos)}${pill('position', 'standing', 'Standing', pos)}${pill('position', 'lying', 'Lying down', pos)}</div>
@@ -339,7 +339,9 @@ function readForm(form) {
   const sys = int(fd.get('sys')), dia = int(fd.get('dia'));
   const pulse = String(fd.get('pulse') ?? '').trim() === '' ? null : int(fd.get('pulse'));
   const errs = S.validReading(sys, dia, pulse);
-  const takenAt = fromLocalInput(fd.get('time'));
+  // Keep the exact capture time (seconds matter for back-to-back readings) unless the user edited it.
+  const orig = Number(form.time.dataset.orig);
+  const takenAt = orig && fd.get('time') === toLocalInput(orig) ? orig : fromLocalInput(fd.get('time'));
   if (!takenAt) errs.push('Please set the date and time.');
   else if (takenAt > Date.now() + 5 * 60000) errs.push('The date and time is in the future.');
   return { errs, values: { sys, dia, pulse, takenAt, arm: fd.get('arm') || '', position: fd.get('position') || '', notes: String(fd.get('notes') ?? '').trim() } };
@@ -376,9 +378,9 @@ async function reviewPhoto() {
     <h2>Check the numbers</h2>
     <div class="photo-wrap" id="pw"><canvas class="photo" id="photo"></canvas><div class="overlay" id="ov"></div></div>
     <div class="row" style="margin-top:.5rem">
-      <button type="button" class="btn small" id="sel">⬚ Select the numbers</button>
+      <button type="button" class="btn small" id="sel">⬚ Select numbers</button>
       <button type="button" class="btn small" id="rot">↻ Rotate</button>
-      <button type="button" class="btn small" id="retake" style="margin-left:auto">📷 Retake</button>
+      <button type="button" class="btn small" id="retake">📷 Retake</button>
     </div>
     <p id="ocr-status" class="status busy">Reading the numbers…</p>
     ${formHTML({ ...(d.values || {}), takenAt: d.takenAt }, { timeHint: d.timeHint })}
@@ -484,10 +486,10 @@ async function runReader(crop = null) {
     }
     const sure = res.confidence >= 0.5 && res.pulse != null;
     setStatus(sure ? 'ok' : 'warn', `${sure ? 'Read' : 'Best guess'}: <b>${res.sys}/${res.dia}</b>${res.pulse != null ? `, pulse <b>${res.pulse}</b>` : ', no pulse found'}. Check them against the monitor and fix anything that's off.
-      <br><span class="small muted">Wrong? Tap ⬚ Select the numbers and drag a box around the three numbers.</span>`);
+      <br><span class="small muted">Wrong? Tap ⬚ Select numbers and drag a box around the screen's numbers.</span>`);
   } else {
     drawBoxes([]);
-    setStatus('warn', `Couldn't read the numbers in this photo. Tap <b>⬚ Select the numbers</b> and drag a box around them, or just type them in below.`);
+    setStatus('warn', `Couldn't read the numbers in this photo. Tap <b>⬚ Select numbers</b> and drag a box around them, or type them in below.`);
   }
 }
 

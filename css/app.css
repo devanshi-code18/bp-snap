@@ -177,6 +177,7 @@ textarea { min-height: 3.2rem; resize: vertical; }
 .errors { color: #c62828; font-size: .9rem; }
 
 .banner { display: flex; gap: .7rem; align-items: flex-start; background: color-mix(in srgb, var(--dia) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--dia) 30%, var(--line)); }
+.share-ic { vertical-align: -3px; color: var(--dia); }
 .banner .x { margin-left: auto; border: 0; background: none; font-size: 1.2rem; color: var(--muted); }
 
 table { width: 100%; border-collapse: collapse; font-size: .9rem; font-variant-numeric: tabular-nums; }
