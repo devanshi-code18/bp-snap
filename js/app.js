@@ -878,7 +878,8 @@ async function manualEntry() {
       await afterSave(saved, true);
     });
   });
-  setTimeout(() => $('#f-sys')?.focus(), 50);
+  // Open the keyboard on the first box, unless the user already tapped into a box.
+  setTimeout(() => { if (!view.contains(document.activeElement) || document.activeElement === view) $('#f-sys')?.focus(); }, 50);
 }
 
 async function editReading(id) {
