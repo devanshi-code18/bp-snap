@@ -85,7 +85,9 @@ export function sessions(readings, gapMin = 10) {
 
 function csvCell(v) {
   if (v == null) return '';
-  const s = String(v);
+  let s = String(v);
+  // Spreadsheet apps run cells starting with = + - @ as formulas; keep free text as text.
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

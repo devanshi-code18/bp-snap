@@ -52,6 +52,7 @@ p { margin: .4rem 0; }
   position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; justify-content: space-between; gap: .5rem;
   padding: calc(.5rem + env(safe-area-inset-top)) 1rem .5rem;
+  background: var(--bg);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--line);
@@ -152,8 +153,8 @@ main { max-width: 640px; margin: 0 auto; padding: 1rem; outline: none; }
 .box span { position: absolute; left: -2px; top: -1.35rem; background: #ffd400; color: #000; font-size: .7rem; font-weight: 700; padding: 0 .3rem; border-radius: 4px 4px 0 0; white-space: nowrap; }
 .box.sel { border-style: dashed; border-color: #fff; }
 .status { margin: .7rem 0; padding: .6rem .8rem; border-radius: 12px; background: var(--bg); font-size: .95rem; }
-.status.ok { background: color-mix(in srgb, var(--ok) 14%, var(--card)); }
-.status.warn { background: color-mix(in srgb, #e0a100 18%, var(--card)); }
+.status.ok { background: rgba(46, 157, 91, .14); background: color-mix(in srgb, var(--ok) 14%, var(--card)); }
+.status.warn { background: rgba(224, 161, 0, .18); background: color-mix(in srgb, #e0a100 18%, var(--card)); }
 .status.busy::before { content: ""; display: inline-block; width: 14px; height: 14px; margin-right: .5rem; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; vertical-align: -2px; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -163,7 +164,7 @@ input, select, textarea {
   font: inherit; color: var(--text); background: var(--card);
   border: 1px solid var(--line); border-radius: 12px; padding: .65rem .75rem; width: 100%;
 }
-input:focus, select:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--brand) 55%, transparent); border-color: transparent; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); outline-color: color-mix(in srgb, var(--brand) 55%, transparent); border-color: transparent; }
 .nums input { font-size: 1.9rem; font-weight: 700; text-align: center; padding: .4rem .2rem; font-variant-numeric: tabular-nums; }
 .nums .sys input { color: var(--sys); }
 .nums .dia input { color: var(--dia); }
@@ -177,7 +178,7 @@ textarea { min-height: 3.2rem; resize: vertical; }
 .pills input:focus-visible + span { outline: 2px solid var(--brand); }
 .errors { color: #c62828; font-size: .9rem; }
 
-.banner { display: flex; gap: .7rem; align-items: flex-start; background: color-mix(in srgb, var(--dia) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--dia) 30%, var(--line)); }
+.banner { display: flex; gap: .7rem; align-items: flex-start; background: rgba(47, 111, 209, .1); border: 1px solid rgba(47, 111, 209, .3); background: color-mix(in srgb, var(--dia) 12%, var(--card)); border-color: color-mix(in srgb, var(--dia) 30%, var(--line)); }
 .share-ic { vertical-align: -3px; color: var(--dia); }
 .banner .x { margin-left: auto; border: 0; background: none; font-size: 1.2rem; color: var(--muted); }
 

@@ -195,6 +195,7 @@ function onboarding() {
     <h1>Welcome to BP Snap</h1>
     <p>Take a photo of a blood pressure monitor after a measurement. BP Snap reads the numbers, you check them, and it keeps a log with the date and time.</p>
     <p class="muted small">Your readings stay on this phone. Nothing is uploaded.</p>
+    ${isIOS() && !standalone() ? `<div class="status warn small"><b>First, add BP Snap to your Home Screen:</b> tap Share, then <b>Add to Home Screen</b>, and open it from there. The Home Screen app keeps its own log, separate from this Safari tab, and Safari may clear site data after a week without a visit.</div>` : ''}
     <form id="ob"><label class="f" for="ob-name">Whose blood pressure are you tracking?</label>
       <input id="ob-name" name="name" required maxlength="40" placeholder="Your name, or e.g. Mom" autocomplete="off">
       <button class="btn primary block" style="margin-top:1rem">Start</button></form>

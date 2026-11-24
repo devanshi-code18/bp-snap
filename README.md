@@ -17,7 +17,7 @@ Take a photo of a blood pressure monitor. BP Snap reads the numbers, you check t
 ## Use it
 
 1. Open https://devanshi-code18.github.io/bp-snap/ in Safari.
-2. Tap Share, then **Add to Home Screen**. (Safari can clear a website's data after 7 days without a visit; Home Screen apps keep it.)
+2. Tap Share, then **Add to Home Screen**, and use it from the Home Screen icon. Do this before logging: the Home Screen app keeps its own log, separate from the Safari tab, and Safari can clear a website's data after 7 days without a visit. (Already logged in Safari? Settings → Save backup there, then Restore backup in the Home Screen app.)
 3. Enter whose readings these are. Measure as usual, and when the final numbers show, tap **Take photo of monitor**.
 4. Check the numbers against the monitor and tap **Save reading**.
 

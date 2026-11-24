@@ -86,6 +86,13 @@ test('CSV export escapes and orders by time', () => {
   assert.ok(lines.length >= 3);
 });
 
+test('CSV export neutralises spreadsheet formulas in free text', () => {
+  const csv = S.toCSV([{ personId: 'p', sys: 120, dia: 80, takenAt: Date.now(), notes: '=HYPERLINK("x")' }], { p: { name: '+me' } });
+  const row = csv.trim().split('\r\n')[1];
+  assert.ok(row.startsWith("'+me,"));
+  assert.ok(row.includes('"\'=HYPERLINK(""x"")"'));
+});
+
 test('validation', () => {
   assert.deepEqual(S.validReading(120, 80, 70), []);
   assert.deepEqual(S.validReading(120, 80, null), []);
