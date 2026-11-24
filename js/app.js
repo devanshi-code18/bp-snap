@@ -926,9 +926,9 @@ function itemHTML(r) {
   const c = S.category(r.sys, r.dia);
   return `<li><a class="item" href="#/r/${encodeURIComponent(r.id)}">
     <span class="time">${fmtTime(r.takenAt)}</span>
-    <span class="val">${Number(r.sys)}/${Number(r.dia)}</span>
-    <span class="meta">${r.pulse ? `pulse ${Number(r.pulse)}` : ''}${r.notes ? ' · note' : ''}</span>
-    ${chip(c)}<span class="chev" aria-hidden="true">›</span></a></li>`;
+    <span class="mid"><span class="val">${Number(r.sys)}/${Number(r.dia)}</span>
+      <span class="meta">${chip(c)}${r.pulse ? ` <span>pulse ${Number(r.pulse)}</span>` : ''}${r.notes ? ' <span>· note</span>' : ''}</span></span>
+    <span class="chev" aria-hidden="true">›</span></a></li>`;
 }
 
 async function history() {
