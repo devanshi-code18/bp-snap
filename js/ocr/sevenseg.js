@@ -669,6 +669,32 @@ function rotateGray(src, w, h, deg) {
   return { gray: out, back };
 }
 
+// Tilt of the digit rows in degrees (positive = rows go down to the right), from pairs of
+// neighbouring digit-shaped blobs; 0 when there is too little evidence.
+function estimateSkew(gray, w, h) {
+  const minDim = Math.min(w, h);
+  const bin = inkMask(gray, w, h, Math.max(2, Math.round(0.025 * minDim)), 0.18, false);
+  const slopes = [];
+  for (const r of [1, 2, 3, 5]) {
+    const { labels, count } = label(dilate(bin, w, h, r, 2 * r), w, h);
+    if (count > 25000) continue;
+    const c = glyphCandidates(blobs(bin, labels, count, w, h), w, h).filter((g) => !g.one && !g.split);
+    for (let i = 0; i < c.length; i++) {
+      for (let j = 0; j < c.length; j++) {
+        const a = c[i], b = c[j];
+        const hr = a.H / b.H;
+        if (hr < 0.85 || hr > 1.18) continue;
+        const H = (a.H + b.H) / 2;
+        const dx = (b.x0 + b.x1 - a.x0 - a.x1) / 2, dy = (b.y0 + b.y1 - a.y0 - a.y1) / 2;
+        if (dx < 0.4 * H || dx > 1.4 * H || Math.abs(dy) > 0.35 * dx) continue;
+        slopes.push(dy / dx);
+      }
+    }
+  }
+  if (slopes.length < 2) return 0;
+  return (Math.atan(median(slopes)) * 180) / Math.PI;
+}
+
 // All threshold passes over one gray image; returns the best reading or null.
 function search(gray, getMax, w, h, quick = false) {
   const minDim = Math.min(w, h);
@@ -744,6 +770,15 @@ export function readDisplay(img, opts = {}) {
   };
   let best = search(gray, getMax, w, h, opts.quick);
   let back = null, angle = 0;
+  // Rows visibly tilted (phone held at an angle): also read a straightened copy.
+  if (!opts.quick && opts.tilt !== false) {
+    const skew = estimateSkew(gray, w, h);
+    if (Math.abs(skew) > 2.5 && Math.abs(skew) < 20) {
+      const rot = rotateGray(gray, w, h, -skew);
+      const res = search(rot.gray, null, w, h, false);
+      if (res && (!best || res.score > best.score + 0.1)) { best = res; back = rot.back; angle = -skew; }
+    }
+  }
   // Photo taken at an angle: when something number-like was found but the read is weak,
   // try a slight tilt each way before giving up.
   if ((!best || confidenceOf(best.pick) < minConf) && !opts.quick && opts.tilt !== false) {

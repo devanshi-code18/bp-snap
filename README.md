@@ -33,13 +33,13 @@ The reader is plain JavaScript (`js/ocr/sevenseg.js`), no model download and no 
 
 | Test set | SYS + DIA right | SYS + DIA + pulse right |
 | --- | --- | --- |
-| 17 real monitor photos from Wikimedia Commons, whole photo | 14 / 17 | 12 / 17 |
+| 17 real monitor photos from Wikimedia Commons, whole photo | 15 / 17 | 12 / 17 |
 | 14 of them framed on the display (like a close-up, or after "Select numbers") | 13 / 14 | 12 / 14 |
-| 160 synthetic monitor screens (slant, gaps, glare, noise, blur) | 150 / 160 | 136 / 160 |
+| 160 synthetic monitor screens (slant, gaps, glare, noise, blur) | 151 / 160 | 137 / 160 |
 
 On 40 photos without a digital reading (cuffs, dial gauges, blank screens, people) it reported a reading on 1. Misses so far: a red LED hospital display, a wide-gap hospital display from far away, and a tilted side-by-side display (it now gets SYS right there). That's why every reading is shown on the photo for a check before saving.
 
-How it works: grayscale and a light blur; ink = darker than the local background (a grey closing, so a whole LCD panel stays background); digit-shaped blobs at a few merge radii seed one band per number; in each band it removes the italic slant, cuts digits at empty columns, and decodes each digit from its seven segment zones. It does this under several thresholds and both polarities, and the same digits at the same place count as votes. SYS, DIA and pulse are then picked by value range, size and layout (SYS above DIA, pulse smaller and under or right of DIA). If nothing reads, it retries the photo tilted 7° each way, then 90° each way.
+How it works: grayscale and a light blur; ink = darker than the local background (a grey closing, so a whole LCD panel stays background); digit-shaped blobs at a few merge radii seed one band per number; in each band it removes the italic slant, cuts digits at empty columns, and decodes each digit from its seven segment zones. It does this under several thresholds and both polarities, and the same digits at the same place count as votes. SYS, DIA and pulse are then picked by value range, size and layout (SYS above DIA, pulse smaller and under or right of DIA). If the digit rows are visibly tilted it also reads a straightened copy; if nothing reads, it retries tilted 7° each way, then turned 90° each way.
 
 ## Not a medical device
 
