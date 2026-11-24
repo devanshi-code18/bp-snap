@@ -114,39 +114,60 @@ export function boxBlur(gray, w, h, r) {
 function extreme(src, w, h, r, isMax) {
   const tmp = new Uint8Array(w * h), out = new Uint8Array(w * h);
   const dq = new Int32Array(Math.max(w, h) + 1);
-  const pass = (a, b, n, m, idx) => {
-    for (let j = 0; j < m; j++) {
-      let head = 0, tail = 0;
-      for (let i = 0; i < n + r; i++) {
-        if (i < n) {
-          const v = a[idx(j, i)];
-          while (tail > head && (isMax ? a[idx(j, dq[tail - 1])] <= v : a[idx(j, dq[tail - 1])] >= v)) tail--;
-          dq[tail++] = i;
-        }
-        const c = i - r;
-        if (c < 0) continue;
-        while (dq[head] < c - r) head++;
-        b[idx(j, c)] = a[idx(j, dq[head])];
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let head = 0, tail = 0;
+    for (let i = 0; i < w + r; i++) {
+      if (i < w) {
+        const v = src[row + i];
+        if (isMax) while (tail > head && src[row + dq[tail - 1]] <= v) tail--;
+        else while (tail > head && src[row + dq[tail - 1]] >= v) tail--;
+        dq[tail++] = i;
       }
+      const c = i - r;
+      if (c < 0) continue;
+      while (dq[head] < c - r) head++;
+      tmp[row + c] = src[row + dq[head]];
     }
-  };
-  pass(src, tmp, w, h, (y, x) => y * w + x);
-  pass(tmp, out, h, w, (x, y) => y * w + x);
+  }
+  for (let x = 0; x < w; x++) {
+    let head = 0, tail = 0;
+    for (let i = 0; i < h + r; i++) {
+      if (i < h) {
+        const v = tmp[i * w + x];
+        if (isMax) while (tail > head && tmp[dq[tail - 1] * w + x] <= v) tail--;
+        else while (tail > head && tmp[dq[tail - 1] * w + x] >= v) tail--;
+        dq[tail++] = i;
+      }
+      const c = i - r;
+      if (c < 0) continue;
+      while (dq[head] < c - r) head++;
+      out[c * w + x] = tmp[dq[head] * w + x];
+    }
+  }
   return out;
 }
 
-// Ink = darker than the local background by a margin. The background is a grey closing
-// (max then min) with radius r, which erases strokes thinner than ~2r but keeps large
-// regions (a whole LCD panel darker than the case stays background).
-export function inkMask(gray, w, h, r, k, invert) {
-  const bg = invert ? extreme(extreme(gray, w, h, r, false), w, h, r, true) : extreme(extreme(gray, w, h, r, true), w, h, r, false);
-  const out = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) {
+// Local background: a grey closing (max then min) with radius r erases dark strokes thinner
+// than ~2r but keeps large regions (a whole LCD panel darker than the case stays background).
+// For light-on-dark displays (invert) it is an opening.
+export function background(gray, w, h, r, invert) {
+  return invert ? extreme(extreme(gray, w, h, r, false), w, h, r, true) : extreme(extreme(gray, w, h, r, true), w, h, r, false);
+}
+
+// Ink = darker (or, inverted, brighter) than the local background by a margin.
+export function maskFrom(gray, bg, k, invert) {
+  const n = gray.length, out = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
     const g = gray[i], b = bg[i];
     if (invert) { if (g - b > Math.max(24, k * g)) out[i] = 1; }
     else if (b - g > Math.max(16, k * b)) out[i] = 1;
   }
   return out;
+}
+
+export function inkMask(gray, w, h, r, k, invert) {
+  return maskFrom(gray, background(gray, w, h, r, invert), k, invert);
 }
 
 // Rectangular dilation with radii rx, ry (separable, sliding counts).
@@ -632,9 +653,10 @@ export function readDisplay(img, opts = {}) {
   let runs = 0, best = null;
   const pass = (g, mode, invert) => {
     for (const R of rads) {
+      const bg = background(g, w, h, R, invert);
       for (const k of ks) {
         runs++;
-        for (const n of analyze(inkMask(g, w, h, R, k, invert), w, h, radii).numbers) { n.run = runs; n.mode = mode; n.invert = invert; all.push(n); }
+        for (const n of analyze(maskFrom(g, bg, k, invert), w, h, radii).numbers) { n.run = runs; n.mode = mode; n.invert = invert; all.push(n); }
       }
     }
     const numbers = consolidate(all, runs);
