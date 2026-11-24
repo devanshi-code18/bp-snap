@@ -1,8 +1,9 @@
 // Offline support: network first (always fresh when online), cached copy when offline.
-const CACHE = 'bp-snap-v2';
+const CACHE = 'bp-snap-v3';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/db.js', 'js/stats.js', 'js/chart.js', 'js/exif.js', 'js/image.js',
+  'js/merge.js', 'js/sync.js', 'js/words.js', 'js/config.js',
   'js/ocr/client.js', 'js/ocr/worker.js', 'js/ocr/sevenseg.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];

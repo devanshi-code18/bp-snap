@@ -7,7 +7,9 @@ Take a photo of a blood pressure monitor. BP Snap reads the numbers, you check t
 ![Home, photo check, history and report screens](docs/screens.png)
 
 - **Photo in, numbers out.** Reads the seven-segment screen (SYS, DIA, pulse) right in the browser. No upload, no account.
-- **You stay in charge.** Every reading is shown on the photo for you to confirm or fix before it's saved. If the first read misses, drag a box around the numbers, or type them.
+- **Made for older eyes.** Large text (follows the iPhone text size, plus a Large / Extra large setting), plain words ("Top number", "Bottom number"), big buttons, and no tab bar while filling something in.
+- **You stay in charge.** Every reading is shown on the photo for you to confirm or fix before it's saved. If the first read misses, tap **Show where** and draw a box around the numbers, or type them.
+- **Readings are kept safe.** A spare copy on the phone, plus an encrypted online backup you get back with a recovery link or 12 words. Works for family too: open the link on a second phone and both show the same readings.
 - **Timing.** Uses the photo's capture time, tags morning / afternoon / evening / night, shows morning vs evening averages, how many mornings and evenings you measured this week, and averages readings taken minutes apart as one sitting.
 - **Several people on one phone.** Switch person from the top right.
 - **Trends and a doctor-ready report.** 7 / 30 / 90-day averages, a chart, ACC/AHA categories, print to PDF, CSV export or share.
@@ -25,7 +27,11 @@ Photo tips: hold the phone straight over the screen, fill most of the frame with
 
 ## Your data
 
-Readings (and a small copy of each photo, optional) are stored in the browser on your phone (IndexedDB). There is no server. Use **Settings → Save backup** now and then and keep the file in Files / iCloud Drive; **Restore backup** brings it back on any phone. **Report → CSV** or **Share** sends the log to a doctor.
+- **On the phone:** readings are saved in the browser's database (IndexedDB) plus a spare copy in local storage. If the database is damaged, the spare copy puts the readings back when the app opens. Clearing the cache or refreshing doesn't touch either.
+- **Online backup (encrypted):** every change is also backed up online, locked on the phone with a secret recovery code before upload. The server only stores encrypted text. Keep the **recovery link** (send it to yourself or family by text or email) or the **12 recovery words**: opening the link or typing the words on any phone brings everything back, and both phones then stay in step. (The backup server lives in `server/`: a Netlify Function with Netlify Blobs that keeps a daily copy for two weeks.)
+- **Backup file:** Settings → Save a backup file, if you also want a file in iCloud Drive.
+
+What can still lose readings: clearing Safari's website data or deleting the Home Screen app *and* not having the recovery link or words. That's why the app asks you to save the recovery link after the first reading.
 
 ## How well it reads
 

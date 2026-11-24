@@ -1,0 +1,10 @@
+{
+  "name": "bp-snap-sync",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Backup server for BP Snap: stores one encrypted blob per family log (Netlify Functions + Netlify Blobs).",
+  "dependencies": {
+    "@netlify/blobs": "^11.1.11"
+  }
+}

@@ -2,12 +2,18 @@
 
 // 2017 ACC/AHA categories (kept in the 2025 AHA/ACC guideline).
 // `ink` is the chip text colour with at least 4.5:1 contrast on `color`.
+// `short` is the everyday word shown in the app, `plain` the sentence shown after saving.
 export const CATEGORIES = [
-  { key: 'normal', label: 'Normal', short: 'Normal', color: '#1f7a45', ink: '#ffffff' },
-  { key: 'elevated', label: 'Elevated', short: 'Elevated', color: '#e6c200', ink: '#1d1b1a' },
-  { key: 'stage1', label: 'High, stage 1', short: 'Stage 1', color: '#f08a1c', ink: '#1d1b1a' },
-  { key: 'stage2', label: 'High, stage 2', short: 'Stage 2', color: '#c62f2a', ink: '#ffffff' },
-  { key: 'severe', label: 'Very high (over 180/120)', short: 'Very high', color: '#8e1b1b', ink: '#ffffff' },
+  { key: 'normal', label: 'Normal', short: 'Normal', color: '#1f7a45', ink: '#ffffff',
+    plain: 'This reading is in the normal range.' },
+  { key: 'elevated', label: 'Elevated', short: 'A little high', color: '#e6c200', ink: '#1d1b1a',
+    plain: 'This reading is a little above normal (called "elevated").' },
+  { key: 'stage1', label: 'High, stage 1', short: 'High (stage 1)', color: '#f08a1c', ink: '#1d1b1a',
+    plain: 'This reading is high (stage 1 high blood pressure).' },
+  { key: 'stage2', label: 'High, stage 2', short: 'High (stage 2)', color: '#c62f2a', ink: '#ffffff',
+    plain: 'This reading is high (stage 2 high blood pressure). If your readings are often this high, talk to your doctor.' },
+  { key: 'severe', label: 'Very high (over 180/120)', short: 'Very high', color: '#8e1b1b', ink: '#ffffff',
+    plain: 'This reading is very high.' },
 ];
 const CAT = Object.fromEntries(CATEGORIES.map((c) => [c.key, c]));
 
