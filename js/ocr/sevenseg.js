@@ -805,8 +805,10 @@ export function readDisplay(img, opts = {}) {
     }
     return { x: x0 * inv, y: y0 * inv, w: (x1 - x0) * inv, h: (y1 - y0) * inv, label: lab, value: n.value };
   };
-  const { S, D, P } = best.pick;
-  const confidence = confidenceOf(best.pick);
+  const { S, D } = best.pick;
+  // A weak, rarely-seen pulse is more often wrong than right: leave it for the user to type.
+  const P = best.pick.P && (best.pick.P.conf >= 0.22 || (best.pick.P.votes ?? 1) > 2) ? best.pick.P : null;
+  const confidence = confidenceOf({ S, D, P });
   if (confidence < minConf) return { ok: false, confidence, boxes: [], numbers: [], ms, tried, guess: { sys: S.value, dia: D.value, pulse: P ? P.value : null } };
   return {
     ok: true,
@@ -814,6 +816,6 @@ export function readDisplay(img, opts = {}) {
     confidence,
     boxes: [toBox(S, 'SYS'), toBox(D, 'DIA')].concat(P ? [toBox(P, 'PULSE')] : []),
     numbers: best.numbers.map((n) => ({ value: n.value, digits: n.digits, conf: n.conf, box: toBox(n, '') })),
-    params: { runs: best.runs, sysVotes: S.votes, diaVotes: D.votes, angle }, ms, tried,
+    params: { runs: best.runs, sysVotes: S.votes, diaVotes: D.votes, pulseVotes: P ? P.votes : 0, pulseConf: P ? +P.conf.toFixed(2) : null, angle }, ms, tried,
   };
 }

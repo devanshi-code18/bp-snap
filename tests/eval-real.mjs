@@ -27,7 +27,7 @@ for (const k of Object.keys(meta).sort()) {
   const r = readDisplay({ width: w, height: h, data }, { maxDim: /^[ca]/.test(k) ? 820 : 760 });
   ms += r.ms;
   const t = k.startsWith('c') ? TRUTH[k.slice(1)] : k.startsWith('a') ? TRUTH[k.split('_')[1]] : TRUTH[k];
-  const got = r.ok ? `${r.sys}/${r.dia} p${r.pulse} c${r.confidence.toFixed(2)}` : 'none';
+  const got = r.ok ? `${r.sys}/${r.dia} p${r.pulse} c${r.confidence.toFixed(2)} pc${r.params.pulseConf} pv${r.params.pulseVotes}` : 'none';
   if (t) {
     pos++;
     const okSD = r.ok && r.sys === t[0] && r.dia === t[1];
