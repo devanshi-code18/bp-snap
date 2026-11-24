@@ -1,0 +1,13 @@
+{
+  "name": "bp-snap",
+  "version": "1.0.0",
+  "description": "Snap a photo of a blood pressure monitor; the reading is logged on your phone.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test tests/",
+    "eval": "node tests/eval-synth.mjs 60",
+    "serve": "python3 -m http.server 8080"
+  }
+}
