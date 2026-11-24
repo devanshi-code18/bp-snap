@@ -606,7 +606,15 @@ function showResult(res) {
   } else {
     if (d.view) { d.view = null; drawPhoto(); }
     drawBoxes([]);
-    setStatus('warn', `Couldn't read the numbers in this photo. Tap <b>Select numbers</b> and drag a box around them, or type them in below.`);
+    const g = res.guess && res.confidence >= 0.18 ? res.guess : null;
+    setStatus('warn', `Couldn't read the numbers in this photo with confidence.${g ? ` Unsure guess: <b>${Number(g.sys)}/${Number(g.dia)}</b>${g.pulse != null ? `, pulse ${Number(g.pulse)}` : ''}. <button type="button" class="btn small" id="use-guess">Use it</button>` : ''}
+      <br><span class="small">Tap <b>Select numbers</b> and drag a box around them, or type them in below.</span>`);
+    $('#use-guess')?.addEventListener('click', () => {
+      form.sys.value = g.sys; form.dia.value = g.dia; form.pulse.value = g.pulse ?? '';
+      d.touched = true;
+      d.values = readForm(form).values;
+      form.sys.focus();
+    });
   }
 }
 
