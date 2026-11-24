@@ -274,6 +274,7 @@ async function home() {
     <button class="btn" data-act="lib">${icon('image')} Choose a photo</button>
     <a class="btn" href="#/manual">${icon('pencil')} Type it in</a>
   </div>
+  <p class="muted small center" style="margin:-.4rem 0 1rem">For the best read, fill the photo with the monitor's screen.</p>
   ${rs.length ? `<section class="card"><h2>Averages</h2>
     <div class="stats">${statBox('Last 7 days', s7)}${statBox('Last 30 days', s30)}${statBox('Mornings, 30 days', tod.morning)}${statBox('Evenings, 30 days', tod.evening)}</div>
     ${s7.count ? `<p class="small" style="margin-top:.6rem">7-day average: ${chip(s7.category)} <span class="muted">${esc(s7.category.label)}</span></p>` : ''}
@@ -338,7 +339,7 @@ async function startCapture(file) {
     return;
   }
   if (state.draft?.url) URL.revokeObjectURL(state.draft.url);
-  state.draft = { ...loaded, src: loaded.img, rot: 0, takenAt, timeHint, ocr: null, token: 0, touched: false };
+  state.draft = { ...loaded, src: loaded.img, rot: 0, view: null, takenAt, timeHint, ocr: null, token: 0, touched: false };
   go('#/new');
 }
 for (const id of ['cam', 'lib']) {
@@ -358,6 +359,7 @@ function formHTML(v, opts = {}) {
       <div class="dia"><label class="f" for="f-dia">DIA · bottom</label><input id="f-dia" name="dia" inputmode="numeric" pattern="[0-9]*" maxlength="3" autocomplete="off" value="${v.dia ?? ''}"></div>
       <div><label class="f" for="f-pulse">Pulse</label><input id="f-pulse" name="pulse" inputmode="numeric" pattern="[0-9]*" maxlength="3" autocomplete="off" value="${v.pulse ?? ''}"></div>
     </div>
+    ${opts.afterNums ?? ''}
     <label class="f" for="f-time">Date and time</label>
     <input id="f-time" name="time" type="datetime-local" value="${toLocalInput(v.takenAt ?? Date.now())}" data-orig="${v.takenAt ?? ''}">
     ${opts.timeHint ? `<p class="muted small">${esc(opts.timeHint)}</p>` : ''}
@@ -418,13 +420,12 @@ async function reviewPhoto() {
       <button type="button" class="btn small" id="rot">${icon('rotate')} Rotate</button>
       <button type="button" class="btn small" id="retake">${icon('camera')} Retake</button>
     </div>
-    <p id="ocr-status" class="status busy">Reading the numbers…</p>
-    ${formHTML({ ...(d.values || {}), takenAt: d.takenAt }, { timeHint: d.timeHint })}
+    ${formHTML({ ...(d.values || {}), takenAt: d.takenAt }, { timeHint: d.timeHint, afterNums: '<p id="ocr-status" class="status busy">Reading the numbers…</p>' })}
   </section>`;
   const form = $('#rf');
   $$('#f-sys, #f-dia, #f-pulse', form).forEach((i) => i.addEventListener('input', () => { d.touched = true; }));
   $('#retake').addEventListener('click', () => $('#cam').click());
-  $('#rot').addEventListener('click', () => { d.rot = (d.rot + 1) % 4; d.src = d.rot ? IMG.rotate(d.img, d.rot) : d.img; drawPhoto(); runReader(); });
+  $('#rot').addEventListener('click', () => { d.rot = (d.rot + 1) % 4; d.src = d.rot ? IMG.rotate(d.img, d.rot) : d.img; d.view = null; drawPhoto(); runReader(); });
   setupSelect();
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -457,20 +458,36 @@ async function reviewPhoto() {
 
 const srcSize = (src) => ({ w: src.naturalWidth || src.width, h: src.naturalHeight || src.height });
 
+// The part of the photo on screen: the whole photo, or zoomed on the display after a read.
+const viewRect = (d) => d.view || { x: 0, y: 0, ...srcSize(d.src) };
+
 function drawPhoto() {
   const d = state.draft;
   const cv = $('#photo');
   if (!cv) return;
-  const shown = IMG.toCanvas(d.src, 1200);
+  const shown = IMG.toCanvas(d.src, 1200, d.view);
   cv.width = shown.width; cv.height = shown.height;
   cv.getContext('2d').drawImage(shown, 0, 0);
   $('#ov').innerHTML = '';
 }
 
 function drawBoxes(boxes, extra = '') {
+  const v = viewRect(state.draft);
+  $('#ov').innerHTML = boxes.map((b) => `<div class="box" style="left:${((b.x - v.x) / v.w) * 100}%;top:${((b.y - v.y) / v.h) * 100}%;width:${(b.w / v.w) * 100}%;height:${(b.h / v.h) * 100}%"><span>${esc(b.label)} ${b.value}</span></div>`).join('') + extra;
+}
+
+// Zoom the preview on the numbers that were read, so they are easy to check on a phone.
+function zoomTo(boxes) {
   const d = state.draft;
   const { w, h } = srcSize(d.src);
-  $('#ov').innerHTML = boxes.map((b) => `<div class="box" style="left:${(b.x / w) * 100}%;top:${(b.y / h) * 100}%;width:${(b.w / w) * 100}%;height:${(b.h / h) * 100}%"><span>${esc(b.label)} ${b.value}</span></div>`).join('') + extra;
+  const x0 = Math.min(...boxes.map((b) => b.x)), y0 = Math.min(...boxes.map((b) => b.y));
+  const x1 = Math.max(...boxes.map((b) => b.x + b.w)), y1 = Math.max(...boxes.map((b) => b.y + b.h));
+  const m = 0.45 * Math.max(x1 - x0, y1 - y0);
+  const r = { x: Math.max(0, x0 - m), y: Math.max(0, y0 - m * 0.6) };
+  r.w = Math.min(w, x1 + m) - r.x;
+  r.h = Math.min(h, y1 + m * 0.6) - r.y;
+  d.view = r.w * r.h < 0.7 * w * h ? r : null;
+  drawPhoto();
 }
 
 function setStatus(cls, html) {
@@ -514,6 +531,7 @@ async function runReader(crop = null) {
   d.ocr = res;
   const form = $('#rf');
   if (res.ok) {
+    zoomTo(res.boxes);
     drawBoxes(res.boxes);
     if (!d.touched) {
       form.sys.value = res.sys;
@@ -524,6 +542,7 @@ async function runReader(crop = null) {
     setStatus(sure ? 'ok' : 'warn', `${sure ? 'Read' : 'Best guess'}: <b>${res.sys}/${res.dia}</b>${res.pulse != null ? `, pulse <b>${res.pulse}</b>` : ', no pulse found'}. Check them against the monitor and fix anything that's off.
       <br><span class="small muted">Wrong? Tap <b>Select numbers</b> and drag a box around the screen's numbers.</span>`);
   } else {
+    if (d.view) { d.view = null; drawPhoto(); }
     drawBoxes([]);
     setStatus('warn', `Couldn't read the numbers in this photo. Tap <b>Select numbers</b> and drag a box around them, or type them in below.`);
   }
@@ -536,7 +555,11 @@ function setupSelect() {
     on = v;
     btn.classList.toggle('primary', on);
     pw.style.touchAction = on ? 'none' : '';
-    if (on) setStatus('', 'Drag a box around the numbers on the screen (SYS, DIA and pulse).');
+    if (on) {
+      // Select on the whole photo.
+      if (state.draft.view) { state.draft.view = null; drawPhoto(); }
+      setStatus('', 'Drag a box around the numbers on the screen (SYS, DIA and pulse).');
+    }
   };
   btn.addEventListener('click', () => setOn(!on));
   const pt = (e) => {
