@@ -288,7 +288,7 @@ function glyphCandidates(list, w, h) {
     if (asp >= 1.05 && asp <= 3.3 && fill > 0.1 && fill < 0.88) out.push({ ...b, W, H, one: false });
     else if (asp > 3.3 && asp < 16 && fill > 0.35) out.push({ ...b, W, H, one: true });
     else if (allowSplit && asp >= 0.32 && asp < 1.05 && fill > 0.1 && fill < 0.8) {
-      for (const p of splitWide(b, w)) consider(p, false);
+      for (const p of splitWide(b, w)) consider({ ...p, split: true }, false);
     }
   };
   for (const b of list) consider(b, true);
@@ -309,10 +309,10 @@ function makeBands(seeds) {
       break;
     }
     if (hit) {
-      hit.x0 = Math.min(hit.x0, sd.x0); hit.x1 = Math.max(hit.x1, sd.x1);
+      hit.x0 = Math.min(hit.x0, sd.x0); hit.x1 = Math.max(hit.x1, sd.x1); hit.seeds.push(sd);
       hit.ys0.push(sd.y0); hit.ys1.push(sd.y1);
       hit.y0 = median(hit.ys0); hit.y1 = median(hit.ys1); hit.H = hit.y1 - hit.y0 + 1;
-    } else bands.push({ x0: sd.x0, x1: sd.x1, y0: sd.y0, y1: sd.y1, H: sd.H, ys0: [sd.y0], ys1: [sd.y1] });
+    } else bands.push({ x0: sd.x0, x1: sd.x1, y0: sd.y0, y1: sd.y1, H: sd.H, ys0: [sd.y0], ys1: [sd.y1], seeds: [sd] });
   }
   return bands;
 }
@@ -363,7 +363,23 @@ function readBand(bin, w, h, band) {
   for (let i = 0; i < n; i++) { const c = Math.round(XS[i] - shear * (YS[i] - cy)) - xA + off; CI[i] = c; cols[c]++; }
   const numbers = [];
   // Segment digits at empty columns (a 1-column gap may still be inside a digit).
-  const segment = (gapTol, alt) => {
+  // Whole-digit blobs from the merge step tell which column runs belong to one digit on
+  // displays that leave wide gaps between segments.
+  const seedRanges = [];
+  for (const sd of band.seeds || []) {
+    const asp = sd.H / sd.W;
+    if (sd.one || sd.split || asp < 1.3 || asp > 2.6 || sd.H < 0.85 * H0 || sd.H > 1.18 * H0) continue;
+    let lo = Infinity, hi = -Infinity;
+    const st = sd.pix.length > 800 ? Math.ceil(sd.pix.length / 800) : 1;
+    for (let q = 0; q < sd.pix.length; q += st) {
+      const i = sd.pix[q], x = i % w, y = (i - x) / w;
+      const c = Math.round(x - shear * (y - cy)) - xA + off;
+      if (c < lo) lo = c;
+      if (c > hi) hi = c;
+    }
+    seedRanges.push([lo - 1, hi + 1]);
+  }
+  const segment = (gapTol, alt, ranges = null) => {
     // Column runs (allow 1 empty column inside a digit).
     const runs0 = [];
     for (let j = 0; j < span; j++) {
@@ -384,6 +400,13 @@ function readBand(bin, w, h, band) {
       splitRun([a, best - 1]);
       splitRun([best + 1, b]);
     };
+    if (ranges) {
+      // Merge neighbouring runs that sit inside one whole-digit blob.
+      for (let k = runs0.length - 2; k >= 0; k--) {
+        const a = runs0[k], b = runs0[k + 1];
+        if (ranges.some(([lo, hi]) => a[0] >= lo && b[1] <= hi)) { a[1] = b[1]; runs0.splice(k + 1, 1); }
+      }
+    }
     for (const r of runs0) splitRun(r);
     const runOf = new Int32Array(span).fill(-1);
     runs.forEach(([a, b], k) => { for (let j = a; j <= b; j++) runOf[j] = k; });
@@ -492,6 +515,7 @@ function readBand(bin, w, h, band) {
     flush();
   };
   segment(2, 1);
+  if (seedRanges.length) segment(2, 0.95, seedRanges);
   return numbers;
 }
 
