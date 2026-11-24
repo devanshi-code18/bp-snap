@@ -84,6 +84,26 @@ check('home shows the last reading saved', latest === `${last.sys}/${last.dia}mm
   await page.goto(`http://127.0.0.1:${PORT}/#/home`, { waitUntil: 'networkidle0' });
 }
 
+// Sideways photo: the reader should try the other orientations by itself.
+{
+  const img = makeMonitor(2);
+  const { width: W, height: H, data } = img;
+  const rot = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const nx = H - 1 - y, ny = x; // 90 degrees clockwise -> new width H
+    rot.set(data.subarray((y * W + x) * 4, (y * W + x) * 4 + 4), (ny * H + nx) * 4);
+  }
+  const file = `${out}/monitor-rot.png`;
+  writePNG(file, { width: H, height: W, data: rot });
+  await page.goto(`http://127.0.0.1:${PORT}/#/home`, { waitUntil: 'networkidle0' });
+  await (await page.$('#lib')).uploadFile(file);
+  await page.waitForSelector('#ocr-status.ok, #ocr-status.warn', { timeout: 40000 });
+  const v = await page.evaluate(() => ({ sys: document.querySelector('#f-sys').value, dia: document.querySelector('#f-dia').value }));
+  check('sideways photo read', +v.sys === img.truth.sys && +v.dia === img.truth.dia, `truth ${img.truth.sys}/${img.truth.dia} got ${v.sys}/${v.dia}`);
+  await shot('05b-rotated');
+  await page.goto(`http://127.0.0.1:${PORT}/#/home`, { waitUntil: 'networkidle0' });
+}
+
 // Manual entry.
 await page.goto(`http://127.0.0.1:${PORT}/#/manual`, { waitUntil: 'networkidle0' });
 await page.waitForSelector('#f-sys');
@@ -138,12 +158,29 @@ const emptyHero = await page.$eval('.hero', (e) => e.textContent);
 check('second person starts empty', /first reading/.test(emptyHero));
 await shot('12-dad');
 
+// Restore a backup file (merges people and readings).
+{
+  const backup = { app: 'bp-snap', version: 1, people: [{ id: 'gp1', name: 'Grandpa', color: '#2e9d5b', createdAt: 1 }],
+    readings: [{ id: 'gr1', personId: 'gp1', sys: 141, dia: 88, pulse: 70, takenAt: Date.now() - 3600000, source: 'manual', createdAt: 1 }, { id: 'gr2', personId: 'gp1', sys: 137, dia: 86, pulse: 68, takenAt: Date.now() - 7200000, source: 'manual', createdAt: 1 }] };
+  const file = `${out}/backup.json`;
+  fs.writeFileSync(file, JSON.stringify(backup));
+  await page.goto(`http://127.0.0.1:${PORT}/#/settings`, { waitUntil: 'networkidle0' });
+  await (await page.$('#restore-file')).uploadFile(file);
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-edit]')].some((b) => b.textContent.includes('Grandpa')), { timeout: 10000 })
+    .then(() => check('restore backup adds people', true)).catch(() => check('restore backup adds people', false));
+  await page.goto(`http://127.0.0.1:${PORT}/#/report`, { waitUntil: 'networkidle0' });
+  await page.select('#rr', '7');
+  const label = await page.$eval('#rr', (e) => e.value);
+  check('report period change', label === '7');
+  await page.select('#rr', '30');
+}
+
 // Data survives reload.
 await page.reload({ waitUntil: 'networkidle0' });
 const nm = await page.$eval('#person-btn .name', (e) => e.textContent);
 check('current person persists across reload', nm === 'Dad', nm);
 const n = await page.evaluate(async () => new Promise((res) => { const r = indexedDB.open('bp-snap'); r.onsuccess = () => { const q = r.result.transaction('readings').objectStore('readings').count(); q.onsuccess = () => res(q.result); }; }));
-check('readings stored', n === 4, `count ${n}`);
+check('readings stored', n === 6, `count ${n}`);
 
 console.log(results.join('\n'));
 console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');
