@@ -600,8 +600,8 @@ function showResult(res) {
       form.dia.value = res.dia;
       form.pulse.value = res.pulse ?? '';
     }
-    const sure = res.confidence >= 0.5 && res.pulse != null;
-    setStatus(sure ? 'ok' : 'warn', `${sure ? 'Read' : 'Best guess'}: <b>${res.sys}/${res.dia}</b>${res.pulse != null ? `, pulse <b>${res.pulse}</b>` : ', no pulse found'}. Check them against the monitor and fix anything that's off.
+    const sure = res.confidence >= 0.5;
+    setStatus(sure ? 'ok' : 'warn', `${sure ? 'Read' : 'Best guess'}: <b>${res.sys}/${res.dia}</b>${res.pulse != null ? `, pulse <b>${res.pulse}</b>` : ' (pulse not read: type it if the monitor shows one)'}. Check them against the monitor and fix anything that's off.
       <br><span class="small muted">Wrong? Tap <b>Select numbers</b> and drag a box around the screen's numbers.</span>`);
   } else {
     if (d.view) { d.view = null; drawPhoto(); }
