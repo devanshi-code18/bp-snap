@@ -550,7 +550,8 @@ export function pickReading(numbers) {
   const cand = [];
   for (const n0 of numbers) {
     if (n0.digits.length < 2 || n0.digits.length > 3 || n0.conf < 0.2 || n0.digits[0] === '0') continue;
-    const n = { ...n0, conf: n0.eff ?? n0.conf };
+    // "11", "111": frame edges and bar graphs look like ones; real readings rarely are.
+    const n = { ...n0, conf: (n0.eff ?? n0.conf) * (/^1+$/.test(n0.digits) ? 0.7 : 1) };
     const dup = cand.find((c) => c.digits === n.digits && overlapFrac(c, n) > 0.5);
     if (dup) { if (n.conf > dup.conf) Object.assign(dup, n); continue; }
     cand.push(n);
@@ -630,22 +631,25 @@ export function _debugAnalyze(gray, w, h, { win, R, k, invert, radii = [0, 1, 2,
  * @returns {{ok:boolean, sys?:number, dia?:number, pulse?:number|null, confidence:number,
  *            boxes:Array, numbers:Array, params?:object, ms:number}}
  */
-export function readDisplay(img, opts = {}) {
-  const t0 = Date.now();
-  const maxDim = opts.maxDim || 720;
-  let { width: w, height: h } = img;
-  let gray = toGray(img.data, w, h, 'luma');
-  let scale = 1;
-  if (Math.max(w, h) > maxDim) {
-    scale = maxDim / Math.max(w, h);
-    const nw = Math.max(1, Math.round(w * scale)), nh = Math.max(1, Math.round(h * scale));
-    gray = resizeGray(gray, w, h, nw, nh);
-    w = nw; h = nh;
+// Rotate a gray image by `deg` around its centre (borders replicated, nearest sample).
+// Returns the image plus a mapper from rotated coordinates back to the original.
+function rotateGray(src, w, h, deg) {
+  const a = (deg * Math.PI) / 180, c = Math.cos(a), sn = Math.sin(a);
+  const cx = w / 2, cy = h / 2, out = new Uint8Array(w * h);
+  const back = (x, y) => [c * (x - cx) + sn * (y - cy) + cx, -sn * (x - cx) + c * (y - cy) + cy];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const [sx, sy] = back(x, y);
+      const ix = Math.min(w - 1, Math.max(0, Math.round(sx))), iy = Math.min(h - 1, Math.max(0, Math.round(sy)));
+      out[y * w + x] = src[iy * w + ix];
+    }
   }
+  return { gray: out, back };
+}
+
+// All threshold passes over one gray image; returns the best reading or null.
+function search(gray, getMax, w, h) {
   const minDim = Math.min(w, h);
-  // Light blur against sensor noise and LCD texture.
-  const blurR = opts.blur ?? Math.max(1, Math.round(minDim / 450));
-  gray = boxBlur(gray, w, h, blurR);
   const rads = [0.012, 0.025, 0.05].map((f) => Math.max(2, Math.round(f * minDim)));
   const ks = [0.18, 0.3];
   const radii = [0, 1, 2, 3, 5].filter((r) => r < minDim / 25);
@@ -666,29 +670,86 @@ export function readDisplay(img, opts = {}) {
   const strong = () => best && best.pick.S.votes >= 3 && best.pick.D.votes >= 3 && best.score > 2.6;
   pass(gray, 'luma', false);
   if (!strong()) pass(gray, 'luma', true);
-  if (!strong()) {
-    let gm = toGray(img.data, img.width, img.height, 'max');
-    if (scale !== 1) gm = resizeGray(gm, img.width, img.height, w, h);
-    gm = boxBlur(gm, w, h, blurR);
+  if (!strong() && getMax) {
+    const gm = getMax();
     pass(gm, 'max', false);
     if (!strong()) pass(gm, 'max', true);
   }
-  const tried = runs;
-  if (best && best.pick) best.params = { runs, sysVotes: best.pick.S.votes, diaVotes: best.pick.D.votes };
-  const ms = Date.now() - t0;
-  if (!best || !best.pick) return { ok: false, confidence: 0, boxes: [], numbers: [], ms, tried };
-  const inv = 1 / scale;
-  const toBox = (n, lab) => ({ x: n.x0 * inv, y: n.y0 * inv, w: (n.x1 - n.x0 + 1) * inv, h: (n.y1 - n.y0 + 1) * inv, label: lab, value: n.value });
-  const { S, D, P } = best.pick;
+  if (best) best.runs = runs;
+  return best && best.pick ? best : null;
+}
+
+const confidenceOf = ({ S, D, P }) => {
   const confs = [S.conf, D.conf].concat(P ? [P.conf] : []);
-  const confidence = Math.max(0, Math.min(1, (confs.reduce((a, b) => a + b, 0) / confs.length) * (P ? 1 : 0.9)));
-  if (confidence < (opts.minConfidence ?? 0.28)) return { ok: false, confidence, boxes: [], numbers: [], ms, tried, guess: { sys: S.value, dia: D.value, pulse: P ? P.value : null } };
+  return Math.max(0, Math.min(1, (confs.reduce((a, b) => a + b, 0) / confs.length) * (P ? 1 : 0.9)));
+};
+
+/**
+ * Read a blood pressure monitor display.
+ * @param {{width:number,height:number,data:Uint8ClampedArray|Uint8Array}} img RGBA pixels
+ * @returns {{ok:boolean, sys?:number, dia?:number, pulse?:number|null, confidence:number,
+ *            boxes:Array, numbers:Array, params?:object, ms:number}}
+ */
+export function readDisplay(img, opts = {}) {
+  const t0 = Date.now();
+  const maxDim = opts.maxDim || 720;
+  const minConf = opts.minConfidence ?? 0.28;
+  let { width: w, height: h } = img;
+  let gray = toGray(img.data, w, h, 'luma');
+  let scale = 1;
+  if (Math.max(w, h) > maxDim) {
+    scale = maxDim / Math.max(w, h);
+    const nw = Math.max(1, Math.round(w * scale)), nh = Math.max(1, Math.round(h * scale));
+    gray = resizeGray(gray, w, h, nw, nh);
+    w = nw; h = nh;
+  }
+  // Light blur against sensor noise and LCD texture.
+  const blurR = opts.blur ?? Math.max(1, Math.round(Math.min(w, h) / 450));
+  gray = boxBlur(gray, w, h, blurR);
+  let gmCache = null;
+  const getMax = () => {
+    if (!gmCache) {
+      let gm = toGray(img.data, img.width, img.height, 'max');
+      if (scale !== 1) gm = resizeGray(gm, img.width, img.height, w, h);
+      gmCache = boxBlur(gm, w, h, blurR);
+    }
+    return gmCache;
+  };
+  let best = search(gray, getMax, w, h);
+  let back = null, angle = 0;
+  // Photo taken at an angle: try a slight tilt each way before giving up.
+  if ((!best || confidenceOf(best.pick) < minConf) && opts.tilt !== false) {
+    for (const deg of [-7, 7]) {
+      const rot = rotateGray(gray, w, h, deg);
+      const res = search(rot.gray, null, w, h);
+      if (res && confidenceOf(res.pick) >= minConf && (!best || res.score > best.score || confidenceOf(best.pick) < minConf)) {
+        best = res; back = rot.back; angle = deg;
+        break;
+      }
+    }
+  }
+  const ms = Date.now() - t0;
+  const tried = best ? best.runs : 0;
+  if (!best) return { ok: false, confidence: 0, boxes: [], numbers: [], ms, tried };
+  const inv = 1 / scale;
+  const toBox = (n, lab) => {
+    let x0 = n.x0, y0 = n.y0, x1 = n.x1 + 1, y1 = n.y1 + 1;
+    if (back) {
+      const pts = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].map(([x, y]) => back(x, y));
+      x0 = Math.min(...pts.map((p) => p[0])); x1 = Math.max(...pts.map((p) => p[0]));
+      y0 = Math.min(...pts.map((p) => p[1])); y1 = Math.max(...pts.map((p) => p[1]));
+    }
+    return { x: x0 * inv, y: y0 * inv, w: (x1 - x0) * inv, h: (y1 - y0) * inv, label: lab, value: n.value };
+  };
+  const { S, D, P } = best.pick;
+  const confidence = confidenceOf(best.pick);
+  if (confidence < minConf) return { ok: false, confidence, boxes: [], numbers: [], ms, tried, guess: { sys: S.value, dia: D.value, pulse: P ? P.value : null } };
   return {
     ok: true,
     sys: S.value, dia: D.value, pulse: P ? P.value : null,
     confidence,
     boxes: [toBox(S, 'SYS'), toBox(D, 'DIA')].concat(P ? [toBox(P, 'PULSE')] : []),
     numbers: best.numbers.map((n) => ({ value: n.value, digits: n.digits, conf: n.conf, box: toBox(n, '') })),
-    params: best.params, ms, tried,
+    params: { runs: best.runs, sysVotes: S.votes, diaVotes: D.votes, angle }, ms, tried,
   };
 }
