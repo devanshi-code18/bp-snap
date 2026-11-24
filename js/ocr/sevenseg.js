@@ -108,6 +108,16 @@ export function grayRange(gray) {
   return hi - lo;
 }
 
+// Median absolute difference of horizontal neighbours: ~0-1 on clean photos, 2+ when noisy.
+export function noiseLevel(g, w, h) {
+  const d = new Uint32Array(256);
+  let n = 0;
+  for (let y = 0; y < h; y += 2) for (let x = 0; x < w - 1; x += 2) { d[Math.abs(g[y * w + x] - g[y * w + x + 1])]++; n++; }
+  let acc = 0;
+  for (let v = 0; v < 256; v++) { acc += d[v]; if (acc >= n / 2) return v; }
+  return 0;
+}
+
 export function boxBlur(gray, w, h, r) {
   if (r <= 0) return gray;
   const I = integral(gray, w, h), out = new Uint8Array(w * h), W1 = w + 1;
@@ -663,10 +673,12 @@ function rotateGray(src, w, h, deg) {
 function search(gray, getMax, w, h, quick = false) {
   const minDim = Math.min(w, h);
   const rads = [0.012, 0.025, 0.05].map((f) => Math.max(2, Math.round(f * minDim)));
-  // Washed-out or dim photos get gentler thresholds.
+  // Washed-out (low contrast, clean) photos get gentler thresholds; dim, noisy ones don't,
+  // or the noise turns into ink.
   const range = grayRange(gray);
-  const ks = range < 110 ? [0.1, 0.18] : [0.18, 0.3];
-  const minDiff = Math.max(8, Math.min(16, Math.round(0.11 * range)));
+  const gentle = range < 110 && noiseLevel(gray, w, h) <= 1;
+  const ks = gentle ? [0.1, 0.18] : [0.18, 0.3];
+  const minDiff = gentle ? Math.max(8, Math.min(16, Math.round(0.11 * range))) : 16;
   const radii = [0, 1, 2, 3, 5].filter((r) => r < minDim / 25);
   const all = [];
   let runs = 0, best = null;
