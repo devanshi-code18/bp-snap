@@ -96,6 +96,18 @@ export function binarize(gray, I, w, h, win, k, invert) {
   return out;
 }
 
+// Spread between the 1st and 99th percentile grey level (global contrast).
+export function grayRange(gray) {
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
+  const n = gray.length;
+  let lo = 0, hi = 255, acc = 0;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * 0.01) { lo = v; break; } }
+  acc = 0;
+  for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= n * 0.01) { hi = v; break; } }
+  return hi - lo;
+}
+
 export function boxBlur(gray, w, h, r) {
   if (r <= 0) return gray;
   const I = integral(gray, w, h), out = new Uint8Array(w * h), W1 = w + 1;
@@ -156,12 +168,12 @@ export function background(gray, w, h, r, invert) {
 }
 
 // Ink = darker (or, inverted, brighter) than the local background by a margin.
-export function maskFrom(gray, bg, k, invert) {
-  const n = gray.length, out = new Uint8Array(n);
+export function maskFrom(gray, bg, k, invert, minDiff = 16) {
+  const n = gray.length, out = new Uint8Array(n), minInv = minDiff * 1.5;
   for (let i = 0; i < n; i++) {
     const g = gray[i], b = bg[i];
-    if (invert) { if (g - b > Math.max(24, k * g)) out[i] = 1; }
-    else if (b - g > Math.max(16, k * b)) out[i] = 1;
+    if (invert) { if (g - b > Math.max(minInv, k * g)) out[i] = 1; }
+    else if (b - g > Math.max(minDiff, k * b)) out[i] = 1;
   }
   return out;
 }
@@ -651,7 +663,10 @@ function rotateGray(src, w, h, deg) {
 function search(gray, getMax, w, h, quick = false) {
   const minDim = Math.min(w, h);
   const rads = [0.012, 0.025, 0.05].map((f) => Math.max(2, Math.round(f * minDim)));
-  const ks = [0.18, 0.3];
+  // Washed-out or dim photos get gentler thresholds.
+  const range = grayRange(gray);
+  const ks = range < 110 ? [0.1, 0.18] : [0.18, 0.3];
+  const minDiff = Math.max(8, Math.min(16, Math.round(0.11 * range)));
   const radii = [0, 1, 2, 3, 5].filter((r) => r < minDim / 25);
   const all = [];
   let runs = 0, best = null;
@@ -660,7 +675,7 @@ function search(gray, getMax, w, h, quick = false) {
       const bg = background(g, w, h, R, invert);
       for (const k of ks) {
         runs++;
-        for (const n of analyze(maskFrom(g, bg, k, invert), w, h, radii).numbers) { n.run = runs; n.mode = mode; n.invert = invert; all.push(n); }
+        for (const n of analyze(maskFrom(g, bg, k, invert, minDiff), w, h, radii).numbers) { n.run = runs; n.mode = mode; n.invert = invert; all.push(n); }
       }
     }
     const numbers = consolidate(all, runs);

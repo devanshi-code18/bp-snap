@@ -19,6 +19,14 @@ test('ACC/AHA categories', () => {
   assert.equal(S.category(0, 80), null);
 });
 
+test('time of day uses the clock where the reading was taken', () => {
+  const ms = Date.UTC(2026, 10, 24, 15, 0); // 15:00 UTC
+  assert.equal(S.timeOfDay(ms, 480), 'morning'); // 07:00 in UTC-8
+  assert.equal(S.timeOfDay(ms, -330), 'evening'); // 20:30 in UTC+5:30
+  assert.equal(S.timeOfDay(ms, -540), 'night'); // 00:00 in UTC+9
+  assert.equal(S.todOf({ takenAt: ms, tzOffset: 480 }), 'morning');
+});
+
 test('time of day buckets', () => {
   assert.equal(S.timeOfDay(at(2026, 11, 24, 7)), 'morning');
   assert.equal(S.timeOfDay(at(2026, 11, 24, 11, 59)), 'morning');
@@ -79,7 +87,8 @@ test('CSV export escapes and orders by time', () => {
     { personId: 'p1', sys: 118, dia: 76, pulse: null, takenAt: at(2026, 11, 22, 7), source: 'manual' },
   ];
   const csv = S.toCSV(rs, people);
-  const lines = csv.trim().split('\r\n');
+  assert.ok(csv.startsWith('\uFEFF'));
+  const lines = csv.slice(1).trim().split('\r\n');
   assert.equal(lines[0], 'person,date_time,systolic,diastolic,pulse,category,time_of_day,arm,position,notes,source');
   assert.match(lines[1], /^"Mom, ""Asha""",2026-11-22T07:00[+-]\d\d:\d\d,118,76,,Normal,morning,,,,manual$/);
   assert.ok(csv.includes('"after dinner\nfelt ok"'));
@@ -88,7 +97,7 @@ test('CSV export escapes and orders by time', () => {
 
 test('CSV export neutralises spreadsheet formulas in free text', () => {
   const csv = S.toCSV([{ personId: 'p', sys: 120, dia: 80, takenAt: Date.now(), notes: '=HYPERLINK("x")' }], { p: { name: '+me' } });
-  const row = csv.trim().split('\r\n')[1];
+  const row = csv.slice(1).trim().split('\r\n')[1];
   assert.ok(row.startsWith("'+me,"));
   assert.ok(row.includes('"\'=HYPERLINK(""x"")"'));
 });

@@ -29,7 +29,13 @@ await page.emulate({
 });
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(`console.${m.type()}: ${m.text()}`); });
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('requestfailed', (r) => errors.push('requestfailed: ' + r.url()));
+page.on('requestfailed', (r) => { if (!offline) errors.push('requestfailed: ' + r.url()); });
+let offline = false;
+page.on('dialog', async (d) => {
+  // Only our own confirm() prompts are expected; anything else (alert) means injected script ran.
+  if (d.type() !== 'confirm') errors.push(`unexpected ${d.type()}: ${d.message()}`);
+  await d.accept();
+});
 
 const shot = async (name) => page.screenshot({ path: `${out}/${name}.png`, fullPage: true });
 const results = [];
@@ -104,6 +110,26 @@ check('home shows the last reading saved', latest === `${last.sys}/${last.dia}mm
   await page.goto(`http://127.0.0.1:${PORT}/#/home`, { waitUntil: 'networkidle0' });
 }
 
+// Typed values survive switching person while checking a photo.
+{
+  const img = makeMonitor(23);
+  const file = `${out}/monitor-23b.png`;
+  writePNG(file, img);
+  await page.goto(`http://127.0.0.1:${PORT}/#/home`, { waitUntil: 'networkidle0' });
+  await (await page.$('#lib')).uploadFile(file);
+  await page.waitForSelector('#ocr-status.ok, #ocr-status.warn', { timeout: 30000 });
+  await page.$eval('#f-sys', (e) => { e.value = ''; });
+  await page.type('#f-sys', '199');
+  await page.type('#f-notes', 'kept');
+  await page.click('#person-btn');
+  await page.waitForSelector('#sheet[open] [data-id]');
+  await page.click('#sheet [data-id]');
+  await page.waitForSelector('#rf');
+  const kept = await page.evaluate(() => ({ sys: document.querySelector('#f-sys').value, notes: document.querySelector('#f-notes').value }));
+  check('values kept across re-render', kept.sys === '199' && kept.notes === 'kept', JSON.stringify(kept));
+  await page.goto(`http://127.0.0.1:${PORT}/#/home`, { waitUntil: 'networkidle0' });
+}
+
 // Manual entry.
 await page.goto(`http://127.0.0.1:${PORT}/#/manual`, { waitUntil: 'networkidle0' });
 await page.waitForSelector('#f-sys');
@@ -113,7 +139,20 @@ await page.type('#f-pulse', '77');
 await page.click('#rf button.primary');
 await page.waitForSelector('#sheet[open] [data-ok]', { timeout: 5000 }).then(() => check('severe warning sheet', true)).catch(() => check('severe warning sheet', false));
 await shot('06-severe');
-await page.click('#sheet [data-ok]').catch(() => {});
+// Closing it any other way (Esc) also leaves the form, so Save can't be tapped twice.
+await page.keyboard.press('Escape');
+await page.waitForSelector('[data-act=cam]', { timeout: 5000 }).then(() => check('closing the warning goes home', true)).catch(() => check('closing the warning goes home', false));
+
+// Double tap on Save stores one reading.
+await page.goto(`http://127.0.0.1:${PORT}/#/manual`, { waitUntil: 'networkidle0' });
+await page.waitForSelector('#f-sys');
+await page.type('#f-sys', '121');
+await page.type('#f-dia', '79');
+const before = await page.evaluate(async () => new Promise((res) => { const r = indexedDB.open('bp-snap'); r.onsuccess = () => { const q = r.result.transaction('readings').objectStore('readings').count(); q.onsuccess = () => res(q.result); }; }));
+await page.evaluate(() => { const b = document.querySelector('#rf button.primary'); b.click(); b.click(); });
+await page.waitForSelector('[data-act=cam]', { timeout: 5000 });
+const after = await page.evaluate(async () => new Promise((res) => { const r = indexedDB.open('bp-snap'); r.onsuccess = () => { const q = r.result.transaction('readings').objectStore('readings').count(); q.onsuccess = () => res(q.result); }; }));
+check('double tap saves once', after - before === 1, `${before} -> ${after}`);
 
 // Validation.
 await page.goto(`http://127.0.0.1:${PORT}/#/manual`, { waitUntil: 'networkidle0' });
@@ -175,12 +214,43 @@ await shot('12-dad');
   await page.select('#rr', '30');
 }
 
+// A hostile backup file must not run script.
+{
+  const evil = { app: 'bp-snap', version: 1, people: [{ id: 'ev1', name: '<img src=x onerror=alert(1)>', color: 'red"><img src=x onerror=alert(2)>' }],
+    readings: [{ id: 'ev2', personId: 'ev1', sys: '<img src=x onerror=alert(3)>', dia: 80, takenAt: Date.now() }, { id: 'ev3', personId: 'ev1', sys: 150, dia: 95, pulse: 60, takenAt: Date.now() - 1000, notes: '<script>alert(4)</script>' }] };
+  const file = `${out}/evil.json`;
+  fs.writeFileSync(file, JSON.stringify(evil));
+  await page.goto(`http://127.0.0.1:${PORT}/#/settings`, { waitUntil: 'networkidle0' });
+  await (await page.$('#restore-file')).uploadFile(file);
+  await page.waitForFunction(() => document.querySelectorAll('[data-edit]').length >= 4, { timeout: 10000 }).catch(() => {});
+  await page.click('#person-btn');
+  await page.waitForSelector('#sheet[open] [data-id]');
+  await page.click('#sheet [data-id="ev1"]');
+  await page.goto(`http://127.0.0.1:${PORT}/#/history`, { waitUntil: 'networkidle0' });
+  await page.goto(`http://127.0.0.1:${PORT}/#/report`, { waitUntil: 'networkidle0' });
+  const injected = await page.evaluate(() => document.querySelectorAll('img[src="x"], script:not([src])').length);
+  const shown = await page.evaluate(() => document.body.textContent.includes('<script>alert(4)</script>'));
+  check('hostile backup stays text', injected === 0 && shown, `injected ${injected}, note shown as text ${shown}`);
+}
+
 // Data survives reload.
 await page.reload({ waitUntil: 'networkidle0' });
 const nm = await page.$eval('#person-btn .name', (e) => e.textContent);
-check('current person persists across reload', nm === 'Dad', nm);
+check('current person persists across reload', nm === '<img src=x onerror=alert(1)>', nm);
 const n = await page.evaluate(async () => new Promise((res) => { const r = indexedDB.open('bp-snap'); r.onsuccess = () => { const q = r.result.transaction('readings').objectStore('readings').count(); q.onsuccess = () => res(q.result); }; }));
-check('readings stored', n === 6, `count ${n}`);
+check('readings stored', n === 8, `count ${n}`);
+
+// Works offline after the first visit (service worker).
+await page.goto(`http://127.0.0.1:${PORT}/#/home`, { waitUntil: 'networkidle0' });
+await page.evaluate(() => navigator.serviceWorker.ready);
+await page.reload({ waitUntil: 'networkidle0' });
+offline = true;
+await page.setOfflineMode(true);
+await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+const offOk = await page.waitForSelector('[data-act=cam]', { timeout: 10000 }).then(() => true).catch(() => false);
+check('loads offline', offOk);
+await page.setOfflineMode(false);
+offline = false;
 
 console.log(results.join('\n'));
 console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');

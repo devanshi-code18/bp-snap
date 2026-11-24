@@ -1,12 +1,13 @@
 // Blood pressure stats: categories, time of day, averages, CSV. Pure functions (tested in Node).
 
 // 2017 ACC/AHA categories (kept in the 2025 AHA/ACC guideline).
+// `ink` is the chip text colour with at least 4.5:1 contrast on `color`.
 export const CATEGORIES = [
-  { key: 'normal', label: 'Normal', short: 'Normal', color: '#2e9d5b' },
-  { key: 'elevated', label: 'Elevated', short: 'Elevated', color: '#c9a400' },
-  { key: 'stage1', label: 'High, stage 1', short: 'Stage 1', color: '#e07b00' },
-  { key: 'stage2', label: 'High, stage 2', short: 'Stage 2', color: '#d1342f' },
-  { key: 'severe', label: 'Very high (over 180/120)', short: 'Very high', color: '#8e1b1b' },
+  { key: 'normal', label: 'Normal', short: 'Normal', color: '#1f7a45', ink: '#ffffff' },
+  { key: 'elevated', label: 'Elevated', short: 'Elevated', color: '#e6c200', ink: '#1d1b1a' },
+  { key: 'stage1', label: 'High, stage 1', short: 'Stage 1', color: '#f08a1c', ink: '#1d1b1a' },
+  { key: 'stage2', label: 'High, stage 2', short: 'Stage 2', color: '#c62f2a', ink: '#ffffff' },
+  { key: 'severe', label: 'Very high (over 180/120)', short: 'Very high', color: '#8e1b1b', ink: '#ffffff' },
 ];
 const CAT = Object.fromEntries(CATEGORIES.map((c) => [c.key, c]));
 
@@ -26,11 +27,13 @@ export const TIMES_OF_DAY = [
   { key: 'night', label: 'Night', from: 22, to: 28 },
 ];
 
-export function timeOfDay(ms) {
-  const h = new Date(ms).getHours();
+// tzOffset (minutes, as Date#getTimezoneOffset) = the clock where the reading was taken.
+export function timeOfDay(ms, tzOffset = null) {
+  const h = tzOffset == null ? new Date(ms).getHours() : new Date(ms - tzOffset * 60000).getUTCHours();
   const hh = h < 4 ? h + 24 : h;
   return TIMES_OF_DAY.find((t) => hh >= t.from && hh < t.to).key;
 }
+export const todOf = (r) => timeOfDay(r.takenAt, r.tzOffset ?? null);
 
 const round = (x) => Math.round(x);
 const avg = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : null);
@@ -60,7 +63,7 @@ export function lastDays(readings, days, now = Date.now()) {
 
 export function byTimeOfDay(readings) {
   const out = {};
-  for (const t of TIMES_OF_DAY) out[t.key] = summarize(readings.filter((r) => timeOfDay(r.takenAt) === t.key));
+  for (const t of TIMES_OF_DAY) out[t.key] = summarize(readings.filter((r) => todOf(r) === t.key));
   return out;
 }
 
@@ -103,9 +106,10 @@ export function toCSV(readings, peopleById = {}) {
   const head = ['person', 'date_time', 'systolic', 'diastolic', 'pulse', 'category', 'time_of_day', 'arm', 'position', 'notes', 'source'];
   const rows = [...readings].sort((a, b) => a.takenAt - b.takenAt).map((r) => [
     peopleById[r.personId]?.name ?? '', localIso(r.takenAt), r.sys, r.dia, r.pulse ?? '',
-    category(r.sys, r.dia)?.label ?? '', timeOfDay(r.takenAt), r.arm ?? '', r.position ?? '', r.notes ?? '', r.source ?? '',
+    category(r.sys, r.dia)?.label ?? '', todOf(r), r.arm ?? '', r.position ?? '', r.notes ?? '', r.source ?? '',
   ]);
-  return [head, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
+  // BOM so Excel reads names like "José" as UTF-8.
+  return '\uFEFF' + [head, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
 }
 
 export function validReading(sys, dia, pulse) {

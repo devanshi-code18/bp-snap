@@ -19,13 +19,14 @@ for (const k of Object.keys(meta).sort()) {
   if (only && !only.includes(k)) continue;
   if (k === 'c35') continue;
   if (process.env.SET === 'crops' && !k.startsWith('c')) continue;
-  if (process.env.SET === 'full' && k.startsWith('c')) continue;
+  if (process.env.SET === 'full' && /^[ca]/.test(k)) continue;
+  if (process.env.SET && process.env.SET.startsWith('a') && !k.startsWith(process.env.SET + '_')) continue;
   const [w, h] = meta[k];
   const data = new Uint8ClampedArray(fs.readFileSync(path.join(dir, `${k}.rgba`)));
   // The app hands the reader a canvas scaled to 1100 px; do the same here.
-  const r = readDisplay({ width: w, height: h, data }, { maxDim: k.startsWith('c') ? 820 : 760 });
+  const r = readDisplay({ width: w, height: h, data }, { maxDim: /^[ca]/.test(k) ? 820 : 760 });
   ms += r.ms;
-  const t = k.startsWith('c') ? TRUTH[k.slice(1)] : TRUTH[k];
+  const t = k.startsWith('c') ? TRUTH[k.slice(1)] : k.startsWith('a') ? TRUTH[k.split('_')[1]] : TRUTH[k];
   const got = r.ok ? `${r.sys}/${r.dia} p${r.pulse} c${r.confidence.toFixed(2)}` : 'none';
   if (t) {
     pos++;

@@ -59,8 +59,9 @@ function fromLocalInput(s) {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(s || '');
   return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() : null;
 }
-const todLabel = (ms) => S.TIMES_OF_DAY.find((t) => t.key === S.timeOfDay(ms)).label;
-const chip = (c) => (c ? `<span class="chip" style="background:${c.color}">${esc(c.short)}</span>` : '');
+const todLabel = (r) => S.TIMES_OF_DAY.find((t) => t.key === S.todOf(r)).label;
+const safeColor = (c) => (/^#[0-9a-f]{6}$/i.test(String(c)) ? c : '#6d6966');
+const chip = (c) => (c ? `<span class="chip" style="background:${c.color};color:${c.ink}">${esc(c.short)}</span>` : '');
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const int = (v) => { const n = parseInt(String(v ?? '').replace(/\D/g, ''), 10); return Number.isFinite(n) ? n : null; };
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
@@ -81,16 +82,39 @@ function download(name, data, type) {
   a.download = name;
   document.body.appendChild(a);
   a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+  // iOS asks "Download?" first; keep the blob alive long enough.
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 120000);
 }
 
 // On iPhone the share sheet is the natural way to put a file in Files / iCloud Drive or email it.
+// Resolves 'shared' | 'downloaded' | 'cancelled' | 'blocked' (share needs a fresh tap).
 async function saveFile(name, blob, title) {
   const file = new File([blob], name, { type: blob.type });
   if (isIOS() && navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file], title }); return; } catch (err) { if (err.name === 'AbortError') return; }
+    try { await navigator.share({ files: [file], title }); return 'shared'; } catch (err) {
+      if (err.name === 'AbortError') return 'cancelled';
+      if (err.name === 'NotAllowedError') return 'blocked';
+    }
   }
   download(name, blob);
+  return 'downloaded';
+}
+
+// Save a file that took a while to build: if iOS refused the share sheet because the tap is
+// too old, offer a button that shares it straight away.
+async function deliverFile(name, blob, title, onDone) {
+  const res = await saveFile(name, blob, title);
+  if (res !== 'blocked') { if (res !== 'cancelled') onDone?.(res); return; }
+  openSheet(`<h2>${esc(title)} is ready</h2><p class="small">${esc(name)}</p>
+    <button class="btn primary block" data-go>${icon('share')} Save or send it</button>
+    <button class="btn block" data-x style="margin-top:.5rem">Cancel</button>`, (el) => {
+    $('[data-x]', el).addEventListener('click', closeSheet);
+    $('[data-go]', el).addEventListener('click', async () => {
+      const r = await saveFile(name, blob, title);
+      closeSheet();
+      if (r === 'shared' || r === 'downloaded') onDone?.(r);
+    });
+  });
 }
 
 const person = () => state.people.find((p) => p.id === state.personId);
@@ -115,23 +139,29 @@ function renderHeader() {
   b.hidden = !p;
   if (p) {
     $('.name', b).textContent = p.name;
-    $('.dot', b).style.background = p.color;
+    $('.dot', b).style.background = safeColor(p.color);
     b.setAttribute('aria-label', `Tracking ${p.name}. Switch person`);
   }
 }
 
 // ---------- sheet (bottom dialog) ----------
+const sheetOpen = () => sheet.open || sheet.hasAttribute('open');
 function openSheet(html, bind) {
   sheet.innerHTML = html;
-  if (typeof sheet.showModal === 'function') sheet.showModal(); else sheet.setAttribute('open', '');
+  if (!sheetOpen()) {
+    try { if (typeof sheet.showModal === 'function') sheet.showModal(); else sheet.setAttribute('open', ''); } catch { sheet.setAttribute('open', ''); }
+  }
   bind?.(sheet);
 }
-function closeSheet() { if (sheet.open) (sheet.close ? sheet.close() : sheet.removeAttribute('open')); }
+function closeSheet() {
+  if (!sheetOpen()) return;
+  if (typeof sheet.close === 'function' && sheet.open) sheet.close(); else { sheet.removeAttribute('open'); sheet.dispatchEvent(new Event('close')); }
+}
 sheet.addEventListener('click', (e) => { if (e.target === sheet) closeSheet(); });
 
 function peopleSheet() {
-  const items = state.people.map((p) => `<li><button class="item btn block" data-id="${p.id}" style="justify-content:flex-start">
-    <span class="dot" style="background:${p.color}"></span><span>${esc(p.name)}</span>${p.id === state.personId ? '<span class="muted small" style="margin-left:auto">current</span>' : ''}</button></li>`).join('');
+  const items = state.people.map((p) => `<li><button class="item btn block" data-id="${esc(p.id)}" style="justify-content:flex-start">
+    <span class="dot" style="background:${safeColor(p.color)}"></span><span>${esc(p.name)}</span>${p.id === state.personId ? '<span class="muted small" style="margin-left:auto">current</span>' : ''}</button></li>`).join('');
   openSheet(`<h2>Who is this reading for?</h2><ul class="list" style="display:grid;gap:.4rem">${items}</ul>
     <div class="row" style="margin-top:1rem"><button class="btn" data-add>+ Add person</button><button class="btn" data-close style="margin-left:auto">Close</button></div>`, (el) => {
     $$('[data-id]', el).forEach((b) => b.addEventListener('click', async () => { closeSheet(); await setPerson(b.dataset.id); route(); }));
@@ -180,9 +210,14 @@ async function route() {
   closeSheet();
   const [name = 'home', arg] = location.hash.replace(/^#\/?/, '').split('/');
   if (!state.people.length) return onboarding();
-  $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name || (name === '' && a.dataset.tab === 'home')));
+  $$('.tabs a').forEach((a) => {
+    const on = a.dataset.tab === name || (name === '' && a.dataset.tab === 'home');
+    a.classList.toggle('active', on);
+    if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
   const views = { home, history, report, settings: settingsView, new: reviewPhoto, manual: manualEntry, r: editReading };
   await (views[name] || home)(arg);
+  view.focus({ preventScroll: true });
 }
 window.addEventListener('hashchange', () => { route(); window.scrollTo(0, 0); });
 
@@ -200,7 +235,9 @@ function onboarding() {
       <input id="ob-name" name="name" required maxlength="40" placeholder="Your name, or e.g. Mom" autocomplete="off">
       <button class="btn primary block" style="margin-top:1rem">Start</button></form>
     <p class="muted small" style="margin-top:1rem">You can add more people later (for example, everyone in the family on one phone).</p>
+    <button class="btn block" id="ob-restore" type="button">${icon('upload')} Restore a backup instead</button>
   </section>`;
+  $('#ob-restore').addEventListener('click', () => $('#restore-file').click());
   $('#ob').addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = e.target.name.value.trim();
@@ -241,9 +278,9 @@ const statBox = (label, s) => `<div class="stat"><div class="v">${s.count ? `${s
 
 function itemHTML(r) {
   const c = S.category(r.sys, r.dia);
-  return `<li><a class="item" href="#/r/${r.id}"><span class="catdot" style="background:${c?.color}" title="${esc(c?.label)}"></span>
-    <span class="val">${r.sys}/${r.dia}</span>
-    <span class="meta">${r.pulse ? `♥ ${r.pulse} · ` : ''}${fmtTime(r.takenAt)} · ${todLabel(r.takenAt)}${r.notes ? ' · note' : ''}${r.hasPhoto ? ' · photo' : ''}</span>
+  return `<li><a class="item" href="#/r/${encodeURIComponent(r.id)}"><span class="catdot" style="background:${c?.color}" aria-hidden="true"></span>
+    <span class="val">${Number(r.sys)}/${Number(r.dia)}<span class="sr-only"> ${esc(c?.label)}</span></span>
+    <span class="meta">${r.pulse ? `♥ ${Number(r.pulse)} · ` : ''}${fmtTime(r.takenAt)} · ${todLabel(r)}${r.notes ? ' · note' : ''}${r.hasPhoto ? ' · photo' : ''}</span>
     <span class="chev" aria-hidden="true">›</span></a></li>`;
 }
 
@@ -265,7 +302,7 @@ async function home() {
   <section class="card hero">
     ${latest ? `<p class="muted small">Latest for ${esc(p.name)} · ${esc(when(latest.takenAt))}</p>
       <div class="bp-big">${latest.sys}<span class="slash">/</span>${latest.dia}<span class="unit">mmHg</span></div>
-      <p>${latest.pulse ? `Pulse ${latest.pulse} · ` : ''}${todLabel(latest.takenAt)} ${chip(cat)}</p>`
+      <p>${latest.pulse ? `Pulse ${latest.pulse} · ` : ''}${todLabel(latest)} ${chip(cat)}</p>`
     : `<h2>Log ${esc(p.name)}'s first reading</h2>
       <p class="muted">Measure as usual. When the final numbers show, take a photo of the monitor's screen. BP Snap reads them; you check and save.</p>`}
   </section>
@@ -299,7 +336,7 @@ async function home() {
 function adherence(rs) {
   const am = new Set(), pm = new Set();
   for (const r of S.lastDays(rs, 7)) {
-    const day = new Date(r.takenAt).toDateString(), t = S.timeOfDay(r.takenAt);
+    const day = new Date(r.takenAt).toDateString(), t = S.todOf(r);
     if (t === 'morning') am.add(day);
     if (t === 'evening' || t === 'night') pm.add(day);
   }
@@ -339,7 +376,10 @@ async function startCapture(file) {
     return;
   }
   if (state.draft?.url) URL.revokeObjectURL(state.draft.url);
-  state.draft = { ...loaded, src: loaded.img, rot: 0, view: null, takenAt, timeHint, ocr: null, token: 0, touched: false };
+  // Work on a copy no bigger than 2400 px: 48 MP photos exceed iOS canvas limits.
+  const { naturalWidth: nw, naturalHeight: nh } = loaded.img;
+  const img = Math.max(nw, nh) > 2400 ? IMG.toCanvas(loaded.img, 2400) : loaded.img;
+  state.draft = { ...loaded, img, src: img, rot: 0, view: null, takenAt, timeHint, ocr: null, token: 0, touched: false };
   go('#/new');
 }
 for (const id of ['cam', 'lib']) {
@@ -385,6 +425,14 @@ function readForm(form) {
   return { errs, values: { sys, dia, pulse, takenAt, arm: fd.get('arm') || '', position: fd.get('position') || '', notes: String(fd.get('notes') ?? '').trim() } };
 }
 
+// Run a form's save once at a time (a double tap must not save twice).
+async function once(form, fn) {
+  const btn = $('button.primary', form);
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try { await fn(); } catch (err) { showErrors(form, [`Could not save: ${err.message || err}`]); } finally { btn.disabled = false; }
+}
+
 function showErrors(form, errs) {
   $('#errs', form).innerHTML = errs.map((e) => `<p>${esc(e)}</p>`).join('');
   if (errs.length) $('#errs', form).scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -401,7 +449,10 @@ async function afterSave(r, isNew) {
       <p><b>${r.sys}/${r.dia}</b> is above 180/120.</p>
       <p>The American Heart Association advises: wait 5 minutes and measure again. If it is still this high, contact your doctor right away.</p>
       <p><b>Call 911</b> if you also have chest pain, shortness of breath, back pain, numbness or weakness, vision changes, or trouble speaking.</p>
-      <button class="btn primary block" data-ok>OK</button>`, (el) => $('[data-ok]', el).addEventListener('click', () => { closeSheet(); go('#/home'); }));
+      <button class="btn primary block" data-ok>OK</button>`, (el) => {
+      sheet.addEventListener('close', () => go('#/home'), { once: true });
+      $('[data-ok]', el).addEventListener('click', closeSheet);
+    });
   } else {
     toast(isNew ? `Saved ${r.sys}/${r.dia} for ${person().name}` : 'Saved');
     go('#/home');
@@ -420,19 +471,24 @@ async function reviewPhoto() {
       <button type="button" class="btn small" id="rot">${icon('rotate')} Rotate</button>
       <button type="button" class="btn small" id="retake">${icon('camera')} Retake</button>
     </div>
-    ${formHTML({ ...(d.values || {}), takenAt: d.takenAt }, { timeHint: d.timeHint, afterNums: '<p id="ocr-status" class="status busy">Reading the numbers…</p>' })}
+    ${formHTML({ ...(d.values || {}), takenAt: d.values?.takenAt ?? d.takenAt }, { timeHint: d.timeHint, afterNums: '<p id="ocr-status" class="status busy">Reading the numbers…</p>' })}
   </section>`;
   const form = $('#rf');
   $$('#f-sys, #f-dia, #f-pulse', form).forEach((i) => i.addEventListener('input', () => { d.touched = true; }));
+  // Keep what was typed if the view re-renders (e.g. switching person).
+  const remember = () => { d.values = readForm(form).values; };
+  form.addEventListener('input', remember);
+  form.addEventListener('change', remember);
   $('#retake').addEventListener('click', () => $('#cam').click());
   $('#rot').addEventListener('click', () => { d.rot = (d.rot + 1) % 4; d.src = d.rot ? IMG.rotate(d.img, d.rot) : d.img; d.view = null; drawPhoto(); runReader(); });
   setupSelect();
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = $('button.primary', form);
+    if (btn.disabled) return;
     const { errs, values } = readForm(form);
     showErrors(form, errs);
     if (errs.length) return;
-    const btn = $('button.primary', form);
     btn.disabled = true;
     try {
       const keep = settings.get('keepPhotos', true);
@@ -442,7 +498,7 @@ async function reviewPhoto() {
         ocr: o, edited: o ? o.sys !== values.sys || o.dia !== values.dia || (o.pulse ?? null) !== values.pulse : true,
         hasPhoto: keep, createdAt: Date.now(), updatedAt: Date.now(), tzOffset: new Date(values.takenAt).getTimezoneOffset(),
       };
-      if (keep) await db.putPhoto(r.id, await IMG.jpeg(IMG.toCanvas(d.src, 960), 0.72));
+      if (keep) await db.putPhoto(r.id, await IMG.jpeg(IMG.toCanvas(d.src, 800), 0.72));
       await db.putReading(r);
       URL.revokeObjectURL(d.url);
       state.draft = null;
@@ -453,7 +509,7 @@ async function reviewPhoto() {
     }
   });
   drawPhoto();
-  runReader();
+  if (d.ocr) showResult(d.ocr); else runReader();
 }
 
 const srcSize = (src) => ({ w: src.naturalWidth || src.width, h: src.naturalHeight || src.height });
@@ -521,6 +577,7 @@ async function runReader(crop = null) {
       for (const q of [1, 3]) {
         const rsrc = IMG.rotate(d.img, (d.rot + q) % 4);
         const r2 = await readCanvas(rsrc, null, true);
+        if (token !== d.token) return; // the user rotated or selected meanwhile
         if (r2.ok) { d.rot = (d.rot + q) % 4; d.src = rsrc; drawPhoto(); res = r2; break; }
       }
     }
@@ -529,6 +586,11 @@ async function runReader(crop = null) {
   }
   if (token !== d.token || state.draft !== d || !$('#rf')) return;
   d.ocr = res;
+  showResult(res);
+}
+
+function showResult(res) {
+  const d = state.draft;
   const form = $('#rf');
   if (res.ok) {
     zoomTo(res.boxes);
@@ -601,14 +663,16 @@ function setupSelect() {
 async function manualEntry() {
   view.innerHTML = `<section class="card"><h2>Type in a reading for ${esc(person().name)}</h2>${formHTML({ takenAt: Date.now() })}</section>`;
   const form = $('#rf');
-  form.addEventListener('submit', async (e) => {
+  form.addEventListener('submit', (e) => {
     e.preventDefault();
-    const { errs, values } = readForm(form);
-    showErrors(form, errs);
-    if (errs.length) return;
-    const r = { id: db.uid(), personId: state.personId, ...values, source: 'manual', ocr: null, hasPhoto: false, createdAt: Date.now(), updatedAt: Date.now(), tzOffset: new Date(values.takenAt).getTimezoneOffset() };
-    await db.putReading(r);
-    await afterSave(r, true);
+    once(form, async () => {
+      const { errs, values } = readForm(form);
+      showErrors(form, errs);
+      if (errs.length) return;
+      const r = { id: db.uid(), personId: state.personId, ...values, source: 'manual', ocr: null, hasPhoto: false, createdAt: Date.now(), updatedAt: Date.now(), tzOffset: new Date(values.takenAt).getTimezoneOffset() };
+      await db.putReading(r);
+      await afterSave(r, true);
+    });
   });
   setTimeout(() => $('#f-sys')?.focus(), 50);
 }
@@ -638,15 +702,17 @@ async function editReading(id) {
     toast('Deleted');
     go('#/history');
   });
-  form.addEventListener('submit', async (e) => {
+  form.addEventListener('submit', (e) => {
     e.preventDefault();
-    const { errs, values } = readForm(form);
-    showErrors(form, errs);
-    if (errs.length) return;
-    const nr = { ...r, ...values, updatedAt: Date.now() };
-    if (r.ocr) nr.edited = r.ocr.sys !== values.sys || r.ocr.dia !== values.dia || (r.ocr.pulse ?? null) !== values.pulse;
-    await db.putReading(nr);
-    await afterSave(nr, false);
+    once(form, async () => {
+      const { errs, values } = readForm(form);
+      showErrors(form, errs);
+      if (errs.length) return;
+      const nr = { ...r, ...values, updatedAt: Date.now() };
+      if (r.ocr) nr.edited = r.ocr.sys !== values.sys || r.ocr.dia !== values.dia || (r.ocr.pulse ?? null) !== values.pulse;
+      await db.putReading(nr);
+      await afterSave(nr, false);
+    });
   });
 }
 
@@ -712,7 +778,7 @@ async function report() {
   $('#rr').addEventListener('change', (e) => { settings.set('reportRange', +e.target.value); report(); });
   $('#print').addEventListener('click', () => window.print());
   const csvName = `bp-${slug(p.name)}-${today()}.csv`;
-  $('#csv').addEventListener('click', () => download(csvName, S.toCSV(rs, peopleById()), 'text/csv'));
+  $('#csv').addEventListener('click', () => saveFile(csvName, new Blob([S.toCSV(rs, peopleById())], { type: 'text/csv' }), 'Blood pressure log'));
   $('#share')?.addEventListener('click', async () => {
     const file = new File([S.toCSV(rs, peopleById())], csvName, { type: 'text/csv' });
     const text = s.count ? `${p.name}'s blood pressure, ${rs.length} readings: average ${s.sys}/${s.dia}${s.pulse ? `, pulse ${s.pulse}` : ''}.` : '';
@@ -724,19 +790,43 @@ async function report() {
 }
 
 // ---------- settings ----------
+// iCalendar lines longer than 75 octets must be folded (CRLF + space).
+const fold = (line) => {
+  const out = [];
+  let cur = '';
+  for (const ch of line) {
+    if (new TextEncoder().encode(cur + ch).length > (out.length ? 74 : 75)) { out.push(cur); cur = ''; }
+    cur += ch;
+  }
+  out.push(cur);
+  return out.join('\r\n ');
+};
+
 function ics(times) {
   const url = location.href.split('#')[0];
   const now = new Date();
   const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
-  const t = new Date(now.getTime() + 86400000);
-  const ymd = `${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}`;
   const ev = times.map((hm, i) => {
-    const [hh, mm] = hm.split(':');
-    return ['BEGIN:VEVENT', `UID:bp-snap-${stamp}-${i}@bp-snap`, `DTSTAMP:${stamp}`, `DTSTART:${ymd}T${hh}${mm}00`, 'DURATION:PT10M', 'RRULE:FREQ=DAILY',
+    const [hh, mm] = hm.split(':').map(Number);
+    // Start today if that time is still ahead, else tomorrow.
+    const t = new Date(now); t.setHours(hh, mm, 0, 0);
+    if (t <= now) t.setDate(t.getDate() + 1);
+    const ymd = `${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}`;
+    return ['BEGIN:VEVENT', `UID:bp-snap-${stamp}-${i}@bp-snap`, `DTSTAMP:${stamp}`, `DTSTART:${ymd}T${pad(hh)}${pad(mm)}00`, 'DURATION:PT10M', 'RRULE:FREQ=DAILY',
       'SUMMARY:Measure blood pressure', `DESCRIPTION:Sit quietly for 5 minutes first. Then log it: ${url}`, `URL:${url}`,
-      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Measure blood pressure', 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT'].join('\r\n');
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Measure blood pressure', 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT'].map(fold).join('\r\n');
   });
   return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//BP Snap//EN', 'CALSCALE:GREGORIAN', ...ev, 'END:VCALENDAR', ''].join('\r\n');
+}
+
+// Safari on iPhone offers "Add to Calendar" when it opens a calendar file; elsewhere download it.
+function openCalendarFile(text) {
+  const blob = new Blob([text], { type: 'text/calendar' });
+  if (!isIOS()) return download('bp-reminders.ics', blob);
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, '_blank');
+  if (!w) location.href = url;
+  setTimeout(() => URL.revokeObjectURL(url), 120000);
 }
 
 async function settingsView() {
@@ -772,20 +862,25 @@ async function settingsView() {
   $$('[data-edit]').forEach((b) => b.addEventListener('click', () => personForm(state.people.find((p) => p.id === b.dataset.edit))));
   $('#add-person').addEventListener('click', () => personForm());
   $('#keep').addEventListener('change', (e) => settings.set('keepPhotos', e.target.checked));
-  $('#csv-all').addEventListener('click', async () => download(`bp-all-${today()}.csv`, S.toCSV(await db.allReadings(), peopleById()), 'text/csv'));
+  $('#csv-all').addEventListener('click', async () => {
+    const blob = new Blob([S.toCSV(await db.allReadings(), peopleById())], { type: 'text/csv' });
+    deliverFile(`bp-all-${today()}.csv`, blob, 'Blood pressure log');
+  });
   $('#backup').addEventListener('click', async () => {
     const data = await db.exportAll({ photos: $('#bk-photos').checked });
     const name = `bp-snap-backup-${today()}.json`;
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-    await saveFile(name, blob, 'BP Snap backup');
-    settings.set('lastBackup', Date.now());
-    toast(`Backup ready: ${plural(data.readings.length, 'reading')}`);
+    // Only count it as backed up once the file was actually saved or sent.
+    await deliverFile(name, blob, 'BP Snap backup', () => {
+      settings.set('lastBackup', Date.now());
+      toast(`Backup saved: ${plural(data.readings.length, 'reading')}`);
+    });
   });
   $('#restore').addEventListener('click', () => $('#restore-file').click());
   $('#rem').addEventListener('click', () => {
     const am = $('#rem-am').value, pm = $('#rem-pm').value;
     settings.set('remAm', am); settings.set('remPm', pm);
-    download('bp-reminders.ics', ics([am, pm].filter(Boolean)), 'text/calendar');
+    openCalendarFile(ics([am, pm].filter(Boolean)));
   });
 }
 
@@ -796,6 +891,7 @@ $('#restore-file').addEventListener('change', async (e) => {
   try {
     const res = await db.importAll(JSON.parse(await f.text()));
     state.people = await db.allPeople();
+    if (!state.people.length) throw new Error('That backup has no people in it.');
     if (!person()) await setPerson(state.people[0].id); else await loadReadings();
     renderHeader();
     toast(`Restored ${plural(res.readings, 'reading')} for ${plural(res.people, 'person')}`);
@@ -818,7 +914,7 @@ async function boot() {
   const saved = settings.get('person', null);
   if (state.people.length) await setPerson(state.people.some((p) => p.id === saved) ? saved : state.people[0].id);
   route();
-  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
 }
