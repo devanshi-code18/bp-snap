@@ -288,7 +288,8 @@ check('recovery link finds the readings', /Found 8 readings/.test(found), found)
 check('recovery code is removed from the address bar', !page2.url().includes('/join/'), page2.url());
 await shot('17-join', page2);
 await page2.click('#join-go');
-await page2.waitForSelector('[data-act=cam], .card h1', { timeout: 15000 });
+const joined = (p) => p.waitForFunction(() => !location.hash.startsWith('#/join') || /Your readings are on this phone/.test(document.body.textContent), { timeout: 20000 });
+await joined(page2);
 await sleep(500);
 check('wiped phone gets all readings back', (await count(page2)) === total, `count ${await count(page2)}`);
 
@@ -300,7 +301,7 @@ await page3.type('#ob-words', words.join(' '));
 await page3.click('#ob-join');
 await page3.waitForSelector('#join-go', { timeout: 15000 });
 await page3.click('#join-go');
-await page3.waitForSelector('[data-act=cam], .card h1', { timeout: 15000 });
+await joined(page3);
 await sleep(500);
 check('12 words get all readings back', (await count(page3)) === total, `count ${await count(page3)}`);
 

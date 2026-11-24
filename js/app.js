@@ -430,6 +430,8 @@ async function joinView(code) {
       settings.set('recoverySaved', true);
       state.joinSecret = null;
       await reloadAll();
+      // The user moved on while it was working: don't pull them back.
+      if (currentRoute()[0] !== 'join') { toast('Your readings are here'); route(); return; }
       if (isIOS() && !standalone() && (await copied)) {
         view.innerHTML = `<section class="card"><h1>${icon('check')} Done</h1>
           <p class="lead">Your readings are on this phone.</p></section>
