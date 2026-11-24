@@ -1,5 +1,5 @@
 // Offline support: network first (always fresh when online), cached copy when offline.
-const CACHE = 'bp-snap-v3';
+const CACHE = 'bp-snap-v4';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/db.js', 'js/stats.js', 'js/chart.js', 'js/exif.js', 'js/image.js',
